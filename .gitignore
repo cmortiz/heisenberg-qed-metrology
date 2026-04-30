@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local agent / IDE state
+.claude/
+
+# Logs
+scripts/logs/
+
+# Archive
+archive/
+
+# Derived analyzer outputs (regenerable from raw CSVs + analyze_*.py)
+scripts/results/alpha_convergence_sweep.csv
+scripts/results/alpha_convergence_sweep.json
+scripts/results/analysis_unified.csv
+scripts/results/analysis_unified.json
+scripts/results/bare_hamiltonian_summary.csv
+scripts/results/bare_hamiltonian_summary.json
+scripts/results/reanalysis_within_hamiltonian_summary.csv
