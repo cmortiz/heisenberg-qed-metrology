@@ -67,7 +67,8 @@ def compute_hamiltonian_params_np(omega, gamma_k, M_evol):
 
 @jit
 def bayesian_update(logpk, phi_eff_grid, outcome):
-    """Log-space Bayesian update: P(+1|omega) = (1 + cos(2*phi_eff))/2 (Remark 6)."""
+    """Log-space Bayesian update for outcome-conditional likelihood:
+    P(v | omega, syndrome) = (1 + sign*cos(2*phi_eff))/2 (Remark 6)."""
     sign = jnp.where(outcome == 0, 1.0, -1.0)
     cos_val = jnp.cos(2.0 * phi_eff_grid)
     likelihood = (1.0 + sign * cos_val) / 2.0
@@ -75,6 +76,31 @@ def bayesian_update(logpk, phi_eff_grid, outcome):
     logpk = logpk + log_lik
     logpk = logpk - logsumexp(logpk)
     return logpk
+
+
+@jit
+def bayesian_update_syndrome(logpk, p_k_grid, d, N_code):
+    """Log-space Bayesian update with the syndrome-probability factor:
+    log P(d | omega, M) = d*log(p_k(omega)) + (N-d)*log(1-p_k(omega)) + const.
+    The omega-independent C(N,d) is absorbed by the posterior renormalization.
+    Together with bayesian_update, this realizes the joint-likelihood ED-FL
+    estimator P(v, syndrome | omega), strictly stronger than the conditional
+    P(v | syndrome, omega) of Eq. 38 in the paper."""
+    p_safe = jnp.clip(p_k_grid, 1e-30, 1.0 - 1e-30)
+    log_lik = d * jnp.log(p_safe) + (N_code - d) * jnp.log(1.0 - p_safe)
+    logpk = logpk + log_lik
+    logpk = logpk - logsumexp(logpk)
+    return logpk
+
+
+@jit
+def precompute_p_k_grid_jax(omega_grid, gamma, M_evol):
+    """Per-qubit error rate p_k(omega) on grid (homogeneous gamma)."""
+    Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
+    M_Omega = M_evol * Omega
+    sin2 = jnp.sin(M_Omega) ** 2
+    ratio2 = omega_grid ** 2 / (omega_grid ** 2 + gamma ** 2 + 1e-30)
+    return sin2 * (1.0 - ratio2)
 
 
 @jit
@@ -117,14 +143,22 @@ def compute_estimate_and_error(logpk, xs, phi):
 
 
 def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
-                         full_likelihood=False, save_rounds_file=None):
-    """Run error-detected Bayesian estimation for a single epsilon target."""
+                         full_likelihood=False, save_rounds_file=None,
+                         no_syndrome_factor=False):
+    """Run error-detected Bayesian estimation for a single epsilon target.
+
+    no_syndrome_factor: ED-FL ablation arm. Skip the syndrome-probability factor
+    of Equation~\\eqref{eq:syndrome-prob-factor}, applying only the outcome-conditional
+    factor~\\eqref{eq:outcome-cond-likelihood}. Quantifies the per-shot Fisher gain
+    of the joint estimator over the conditional one (paper claims subleading
+    O(gamma^4 / (N^2 omega^4))).
+    """
     if full_likelihood:
         assert h == 0, "Full-likelihood mode requires homogeneous noise (h=0)"
 
     N_code = 2 * L + 1
 
-    M_max = max(1, int(1.0 / epsilon))
+    M_max = max(1, int(1.0 / (epsilon * N_code)))
     # Nyquist safety: N_code * M must fit in grid
     nyquist_limit = (2 ** (m - 2)) // N_code
     M_max = min(M_max, max(1, nyquist_limit))
@@ -167,6 +201,7 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
 
     phi_eff_cache = {}
     phi_single_cache = {}
+    p_k_cache = {}
     max_cache_entries = (MAX_PHI_EFF_CACHE_MB * 1024 * 1024) // (grid_size * 4)
 
     total_physical_resources = 0
@@ -175,6 +210,8 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
     n_updates = 0
     n_syndrome_used = 0
     sum_d = 0
+    sum_F_obs = 0.0
+    sum_M_sq = 0.0
     omega_jax = jnp.float32(omega_true)
 
     for i in range(MAX_EXPERIMENTS):
@@ -193,6 +230,8 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
             if d > 0:
                 n_syndrome_used += 1
             sum_d += d
+            sum_F_obs += 4.0 * (M_evol ** 2) * (N_eff ** 2)
+            sum_M_sq += M_evol ** 2
 
             phi_single_true = float(phi_k_all[i, 0])
             phi_eff_true = N_eff * phi_single_true
@@ -213,6 +252,16 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
                 )
             phi_eff_grid = N_eff * phi_single_cache[M_evol]
 
+            if M_evol not in p_k_cache:
+                if len(p_k_cache) >= max_cache_entries:
+                    p_k_cache.clear()
+                p_k_cache[M_evol] = precompute_p_k_grid_jax(
+                    omega_grid_jax, gammas_jax[0], jnp.float32(M_evol)
+                )
+            p_k_grid = p_k_cache[M_evol]
+
+            if not no_syndrome_factor:
+                logpk = bayesian_update_syndrome(logpk, p_k_grid, d, N_code)
             logpk = bayesian_update(logpk, phi_eff_grid, outcome)
 
             if n_updates % CHECK_FREQUENCY_FL == 0 or i == MAX_EXPERIMENTS - 1:
@@ -221,13 +270,17 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
                 if error_val < epsilon * CONVERGENCE_TOLERANCE:
                     mean_d = sum_d / n_updates if n_updates > 0 else 0.0
                     return (total_physical_resources, True, error_val, N_code,
-                            n_updates, 0, n_syndrome_used, mean_d)
+                            n_updates, 0, n_syndrome_used, mean_d,
+                            sum_F_obs, sum_M_sq)
         else:
             if d > 0:
                 n_rejected += 1
                 continue
 
             n_accepted += 1
+            # Rejection sampling only retains d=0, so N_eff = N_code each round.
+            sum_F_obs += 4.0 * (M_evol ** 2) * (N_code ** 2)
+            sum_M_sq += M_evol ** 2
             phi_eff_true = float(phi_eff_true_all[i])
             p_plus = (1.0 + np.cos(2.0 * phi_eff_true)) / 2.0
             outcome = 0 if uniforms_outcome[i] < p_plus else 1
@@ -247,19 +300,22 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h, L, m, rng,
                 error_val = float(error)
                 if error_val < epsilon * CONVERGENCE_TOLERANCE:
                     return (total_physical_resources, True, error_val, N_code,
-                            n_accepted, n_rejected, 0, 0.0)
+                            n_accepted, n_rejected, 0, 0.0,
+                            sum_F_obs, sum_M_sq)
 
     _, error = compute_estimate_and_error(logpk, xs, omega_jax)
     if full_likelihood:
         mean_d = sum_d / n_updates if n_updates > 0 else 0.0
         return (total_physical_resources, False, float(error), N_code,
-                n_updates, 0, n_syndrome_used, mean_d)
+                n_updates, 0, n_syndrome_used, mean_d,
+                sum_F_obs, sum_M_sq)
     return (total_physical_resources, False, float(error), N_code,
-            n_accepted, n_rejected, 0, 0.0)
+            n_accepted, n_rejected, 0, 0.0,
+            sum_F_obs, sum_M_sq)
 
 
 def run_simulation(seed, gamma_mean, h, L, extended, full_likelihood=False,
-                    save_rounds=False):
+                    save_rounds=False, no_syndrome_factor=False):
     """Run error-detected estimation across all epsilon values."""
     omega_true = 0.3
     N_code = 2 * L + 1
@@ -319,16 +375,21 @@ def run_simulation(seed, gamma_mean, h, L, extended, full_likelihood=False,
 
         try:
             (total_resources, converged, final_error, n_code,
-             n_accepted, n_rejected, n_synd, mean_d) = simulate_for_epsilon(
+             n_accepted, n_rejected, n_synd, mean_d,
+             sum_F_obs, sum_M_sq) = simulate_for_epsilon(
                 eps, omega_true, gamma_mean, h, L, m, eps_rng,
                 full_likelihood=full_likelihood,
-                save_rounds_file=rounds_file
+                save_rounds_file=rounds_file,
+                no_syndrome_factor=no_syndrome_factor
             )
         finally:
             if rounds_file is not None:
                 rounds_file.close()
 
-        mode_label = 'full_likelihood' if full_likelihood else 'error_detected'
+        if full_likelihood:
+            mode_label = 'full_likelihood_cond_only' if no_syndrome_factor else 'full_likelihood'
+        else:
+            mode_label = 'error_detected'
         results.append({
             'seed': seed,
             'gamma': gamma_mean,
@@ -345,6 +406,8 @@ def run_simulation(seed, gamma_mean, h, L, extended, full_likelihood=False,
             'acceptance_rate': n_accepted / max(1, n_accepted + n_rejected),
             'n_syndrome_used': n_synd,
             'mean_d': mean_d,
+            'sum_F_obs': sum_F_obs,
+            'sum_M_sq': sum_M_sq,
             'timestamp': pd.Timestamp.now().isoformat(),
         })
 
@@ -383,16 +446,24 @@ def main():
                         help="Use full-likelihood inference (all rounds, syndrome-adjusted)")
     parser.add_argument("--save-rounds", action='store_true',
                         help="Save per-round data to results/rounds/")
+    parser.add_argument("--no-syndrome-factor", action='store_true',
+                        help="ED-FL ablation: skip syndrome-prob factor (cond-only). "
+                             "Use with --full-likelihood.")
     args = parser.parse_args()
+    if args.no_syndrome_factor and not args.full_likelihood:
+        parser.error("--no-syndrome-factor requires --full-likelihood")
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     os.makedirs(output_dir, exist_ok=True)
 
     df = run_simulation(args.seed, args.gamma, args.h, args.L, args.extended,
                         full_likelihood=args.full_likelihood,
-                        save_rounds=args.save_rounds)
+                        save_rounds=args.save_rounds,
+                        no_syndrome_factor=args.no_syndrome_factor)
 
-    if args.full_likelihood:
+    if args.no_syndrome_factor:
+        output_file = os.path.join(output_dir, 'ed_full_likelihood_cond_only.csv')
+    elif args.full_likelihood:
         output_file = os.path.join(output_dir, 'ed_full_likelihood.csv')
     else:
         output_file = os.path.join(output_dir, 'ed_postselect.csv')

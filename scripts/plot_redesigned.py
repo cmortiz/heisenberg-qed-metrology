@@ -602,6 +602,7 @@ def main():
     ed_ps_df = load_csv(args.ed_csv, "ed_postselect.csv")
     ed_fl_df = load_csv(args.ed_fl_csv, "ed_full_likelihood.csv")
     combined_ps_df = load_csv(args.combined_csv, "combined_postselect.csv")
+    combined_fl_df = load_csv(args.combined_fl_csv, "combined_full_likelihood.csv")
 
     if ghz_df is not None or ed_fl_df is not None:
         figure1_error_detection(ghz_df, ed_fl_df, outdir)
@@ -613,10 +614,10 @@ def main():
     else:
         print("\nFigure 2: SKIP (need both ED post-selection and full-likelihood)")
 
-    if combined_ps_df is not None:
-        figure3_combined_protocol(combined_ps_df, outdir)
+    if combined_fl_df is not None:
+        figure3_combined_protocol(combined_fl_df, outdir)
     else:
-        print("\nFigure 3: SKIP (no combined data)")
+        print("\nFigure 3: SKIP (no combined ED-FL data; caption requires combined_full_likelihood.csv)")
 
     print("\nDone.")
 

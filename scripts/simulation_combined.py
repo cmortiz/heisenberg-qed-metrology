@@ -69,12 +69,56 @@ def compute_hamiltonian_params_np(omega_k, gamma_k, M_evol):
 
 @jit
 def bayesian_update(logpk, phi_eff_grid, outcome):
-    """Log-space Bayesian update: P(+1|omega_j) = (1 + cos(2*Phi_eff))/2."""
+    """Log-space Bayesian update for outcome-conditional likelihood:
+    P(v | omega, syndrome) = (1 + sign*cos(2*Phi_eff))/2."""
     sign = jnp.where(outcome == 0, 1.0, -1.0)
     cos_val = jnp.cos(2.0 * phi_eff_grid)
     likelihood = (1.0 + sign * cos_val) / 2.0
     log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
     logpk = logpk + log_lik
+    logpk = logpk - logsumexp(logpk)
+    return logpk
+
+
+@jit
+def bayesian_update_marg(logpk, phi_eff_grid, outcome, log_visibility):
+    """Marginalized outcome-conditional update for the analytic Lemma 5.3 form:
+    P(v | omega) = (1 + sign * lambda * cos(2 Phi_eff))/2 with lambda = exp(log_visibility),
+    where log_visibility = -2 M^2 N_clean sigma_eps^2 captures the Gaussian shot-to-shot
+    epsilon_k marginalization. Inference still evaluates phi_eff at epsilons=0 (the
+    leading-order mean), and the visibility damping carries the sigma^2 correction
+    analytically. Reduces to bayesian_update when log_visibility = 0 (sigma=0)."""
+    sign = jnp.where(outcome == 0, 1.0, -1.0)
+    cos_val = jnp.cos(2.0 * phi_eff_grid) * jnp.exp(log_visibility)
+    likelihood = (1.0 + sign * cos_val) / 2.0
+    log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
+    logpk = logpk + log_lik
+    logpk = logpk - logsumexp(logpk)
+    return logpk
+
+
+@jit
+def precompute_p_k_per_qubit_grid_jax(omega_grid, gammas, epsilons, M_evol):
+    """Per-qubit p_k(omega_j) over the omega-grid for each physical qubit. Returns (G, N_total)."""
+    omega_k = omega_grid[:, None] + epsilons[None, :]
+    Omega_k = jnp.sqrt(omega_k**2 + gammas[None, :]**2 + 1e-30)
+    M_Omega_k = M_evol * Omega_k
+    sin2 = jnp.sin(M_Omega_k) ** 2
+    ratio_g2 = gammas[None, :] ** 2 / (omega_k ** 2 + gammas[None, :] ** 2 + 1e-30)
+    return sin2 * ratio_g2
+
+
+@jit
+def bayesian_update_syndrome_per_qubit(logpk, p_k_per_qubit_grid, error_mask):
+    """Log-space Bayesian update with per-qubit Bernoulli syndrome factor (Poisson-binomial):
+    log L(errors | omega) = sum_k [e_k log p_k(omega) + (1-e_k) log(1-p_k(omega))],
+    where e_k is the realized error indicator on qubit k. Together with bayesian_update
+    this realizes the joint-likelihood ED-FL estimator P(v, syndrome | omega), strictly
+    stronger than the conditional P(v | syndrome, omega) of Eq. 38 in the paper."""
+    p_safe = jnp.clip(p_k_per_qubit_grid, 1e-30, 1.0 - 1e-30)
+    log_lik = error_mask[None, :] * jnp.log(p_safe) + (1.0 - error_mask[None, :]) * jnp.log(1.0 - p_safe)
+    log_lik_sum = jnp.sum(log_lik, axis=1)
+    logpk = logpk + log_lik_sum
     logpk = logpk - logsumexp(logpk)
     return logpk
 
@@ -136,12 +180,33 @@ def compute_estimate_and_error(logpk, xs, phi):
 
 def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
                          L, m, rng, epsilons_np,
-                         full_likelihood=False, save_rounds_file=None):
-    """Bayesian estimation for a single epsilon. Returns (resources, converged, error, ...)."""
+                         full_likelihood=False, save_rounds_file=None,
+                         no_syndrome_factor=False, marginalize_noise=False,
+                         marg_inference=None,
+                         sigma_epsilon=0.0):
+    """Bayesian estimation for a single epsilon. Returns (resources, converged, error, ...).
+
+    no_syndrome_factor: ED-FL ablation. Skip syndrome-prob factor (cond-only arm).
+    marginalize_noise: per-shot resampling of epsilon_k on the truth side (the
+        "marginalized" setting of §9.1.3, with epsilon_k unknown to the estimator).
+    marg_inference: defaults to marginalize_noise. If True, inference uses the
+        analytic Lemma 5.3 form: evaluates phi_eff at epsilons=0 (the leading-order
+        mean) and applies visibility damping lambda = exp(-2 M^2 N_clean sigma^2)
+        in the outcome-conditional likelihood. N_clean = N_total - d_total (FL with
+        clean-mask) or N_total (rejection-sampling, since d=0).
+
+        Setting marg_inference=True with marginalize_noise=False tests the §9.1.3
+        lemma claim directly: quenched truth (epsilon_k fixed per device) with
+        marginalized inference (visibility-damped likelihood). The lemma asserts
+        the resulting alpha matches the oracle-quenched alpha to leading order
+        when N_total sigma^2 = o(1).
+    """
+    if marg_inference is None:
+        marg_inference = marginalize_noise
     N_code = 2 * L + 1
     N_total = 3 * N_code
 
-    M_max = max(1, int(1.0 / epsilon))
+    M_max = max(1, int(1.0 / (epsilon * N_total)))
     nyquist_limit = (2 ** (m - 2)) // N_total
     M_max = min(M_max, max(1, nyquist_limit))
 
@@ -166,26 +231,41 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
     uniforms_outcome = rng.random(MAX_EXPERIMENTS)
     uniforms_syndrome = rng.random((MAX_EXPERIMENTS, N_total))
 
-    # Batch-compute hamiltonian params for all M_evol values
-    M_evols_col = M_evols[:, None].astype(np.float64)
-    omegas_row = omegas_np[None, :].astype(np.float64)
-    gammas_row = gammas_np[None, :].astype(np.float64)
-    Omega_k_all = np.sqrt(omegas_row**2 + gammas_row**2)
-    M_Omega_k_all = M_evols_col * Omega_k_all
-    sin2_all = np.sin(M_Omega_k_all)**2
-    denom_all = omegas_row**2 + gammas_row**2 + 1e-30
-    p_k_all = sin2_all * (gammas_row**2 / denom_all)
-    # sin/cos form avoids tan overflow near pi/2 poles
-    c_all = np.cos(M_Omega_k_all)
-    s_all = np.sin(M_Omega_k_all)
-    sign_c_all = np.where(c_all >= 0, 1.0, -1.0)
-    phi_k_all = np.arctan2(
-        sign_c_all * s_all * omegas_row, sign_c_all * Omega_k_all * c_all
-    )
-    phi_eff_true_all = np.sum(phi_k_all, axis=1)
+    if marg_inference:
+        # Inference grid evaluates phi_eff at epsilons=0 (the leading-order mean)
+        # and applies visibility damping lambda = exp(-2 M^2 N_clean sigma^2) in
+        # bayesian_update_marg. Independent of the truth-side noise model.
+        epsilons_jax = jnp.zeros(N_total, dtype=jnp.float32)
+
+    if marginalize_noise:
+        # Per-shot epsilon_k draws on the truth side (the §9.1.3 "marg setting").
+        epsilons_per_shot = rng.normal(0.0, sigma_epsilon, (MAX_EXPERIMENTS, N_total))
+        # Per-shot p_k and phi_k computed inside the loop, not batched.
+        p_k_all = None
+        phi_k_all = None
+        phi_eff_true_all = None
+    else:
+        # Batch-compute hamiltonian params for all M_evol values (quenched mode)
+        M_evols_col = M_evols[:, None].astype(np.float64)
+        omegas_row = omegas_np[None, :].astype(np.float64)
+        gammas_row = gammas_np[None, :].astype(np.float64)
+        Omega_k_all = np.sqrt(omegas_row**2 + gammas_row**2)
+        M_Omega_k_all = M_evols_col * Omega_k_all
+        sin2_all = np.sin(M_Omega_k_all)**2
+        denom_all = omegas_row**2 + gammas_row**2 + 1e-30
+        p_k_all = sin2_all * (gammas_row**2 / denom_all)
+        # sin/cos form avoids tan overflow near pi/2 poles
+        c_all = np.cos(M_Omega_k_all)
+        s_all = np.sin(M_Omega_k_all)
+        sign_c_all = np.where(c_all >= 0, 1.0, -1.0)
+        phi_k_all = np.arctan2(
+            sign_c_all * s_all * omegas_row, sign_c_all * Omega_k_all * c_all
+        )
+        phi_eff_true_all = np.sum(phi_k_all, axis=1)
 
     phi_eff_cache = {}
     phi_per_qubit_cache = {}  # Full-likelihood: (G, N_total) per-qubit grids for d>0 correction
+    p_k_per_qubit_cache = {}  # Full-likelihood: (G, N_total) per-qubit p_k grids for syndrome factor
     max_cache_entries = (MAX_PHI_EFF_CACHE_MB * 1024 * 1024) // (grid_size * 4)
     max_per_qubit_entries = max(1, max_cache_entries // N_total)  # N_total x larger entries
 
@@ -195,12 +275,29 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
     n_updates = 0
     n_syndrome_used = 0
     sum_d = 0
+    sum_F_obs = 0.0
+    sum_M_sq = 0.0
     omega_jax = jnp.float32(omega_true)
 
     for i in range(MAX_EXPERIMENTS):
         M_evol = int(M_evols[i])
 
-        p_k = p_k_all[i]
+        if marginalize_noise:
+            # Fresh epsilon_k for this shot (truly marginalized true distribution).
+            omegas_shot = omega_true + epsilons_per_shot[i]
+            Omega_k_shot = np.sqrt(omegas_shot**2 + gammas_np**2)
+            M_Omega_shot = M_evol * Omega_k_shot
+            sin2_shot = np.sin(M_Omega_shot)**2
+            denom_shot = omegas_shot**2 + gammas_np**2 + 1e-30
+            p_k = sin2_shot * (gammas_np**2 / denom_shot)
+            c_shot = np.cos(M_Omega_shot)
+            s_shot = np.sin(M_Omega_shot)
+            sign_c_shot = np.where(c_shot >= 0, 1.0, -1.0)
+            phi_k_shot = np.arctan2(
+                sign_c_shot * s_shot * omegas_shot, sign_c_shot * Omega_k_shot * c_shot
+            )
+        else:
+            p_k = p_k_all[i]
 
         errors_k = uniforms_syndrome[i, :N_total] < p_k
 
@@ -214,14 +311,20 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
 
         if full_likelihood:
             n_updates += 1
+            N_eff = N_total - d_total
 
             if d_total > 0:
                 n_syndrome_used += 1
             sum_d += d_total
+            sum_F_obs += 4.0 * (M_evol ** 2) * (N_eff ** 2)
+            sum_M_sq += M_evol ** 2
 
             # Clean-mask: errored qubits contribute zero phase (Theorem 16)
             mask_clean = np.where(errors_k, 0.0, 1.0)
-            phi_eff_true = float(np.sum(mask_clean * phi_k_all[i]))
+            if marginalize_noise:
+                phi_eff_true = float(np.sum(mask_clean * phi_k_shot))
+            else:
+                phi_eff_true = float(np.sum(mask_clean * phi_k_all[i]))
 
             p_plus = (1.0 + np.cos(2.0 * phi_eff_true)) / 2.0
             outcome = 0 if uniforms_outcome[i] < p_plus else 1
@@ -231,6 +334,10 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
                     f"{epsilon:.10e},{i},{M_evol},{block1_d},{block2_d},"
                     f"{block3_d},{d_total},{outcome}\n"
                 )
+
+            error_mask_jax = jnp.array(
+                errors_k.astype(np.float32), dtype=jnp.float32
+            )
 
             if d_total == 0:
                 if M_evol not in phi_eff_cache:
@@ -249,14 +356,29 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
                         omega_grid_jax, gammas_jax, epsilons_jax,
                         jnp.float32(M_evol)
                     )
-                error_mask_jax = jnp.array(
-                    errors_k.astype(np.float32), dtype=jnp.float32
-                )
                 phi_eff_grid = compute_phi_eff_with_errors(
                     phi_per_qubit_cache[M_evol], error_mask_jax
                 )
 
-            logpk = bayesian_update(logpk, phi_eff_grid, outcome)
+            if M_evol not in p_k_per_qubit_cache:
+                if len(p_k_per_qubit_cache) >= max_per_qubit_entries:
+                    p_k_per_qubit_cache.clear()
+                p_k_per_qubit_cache[M_evol] = precompute_p_k_per_qubit_grid_jax(
+                    omega_grid_jax, gammas_jax, epsilons_jax,
+                    jnp.float32(M_evol)
+                )
+            p_k_per_qubit_grid = p_k_per_qubit_cache[M_evol]
+
+            if not no_syndrome_factor:
+                logpk = bayesian_update_syndrome_per_qubit(logpk, p_k_per_qubit_grid, error_mask_jax)
+            if marg_inference:
+                N_clean = N_total - d_total
+                log_visibility = -2.0 * (M_evol ** 2) * N_clean * (sigma_epsilon ** 2)
+                logpk = bayesian_update_marg(
+                    logpk, phi_eff_grid, outcome, jnp.float32(log_visibility)
+                )
+            else:
+                logpk = bayesian_update(logpk, phi_eff_grid, outcome)
 
             if n_updates % CHECK_FREQUENCY_FL == 0 or i == MAX_EXPERIMENTS - 1:
                 _, error = compute_estimate_and_error(logpk, xs, omega_jax)
@@ -264,15 +386,22 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
                 if error_val < epsilon * CONVERGENCE_TOLERANCE:
                     mean_d = sum_d / n_updates if n_updates > 0 else 0.0
                     return (total_physical_resources, True, error_val, N_total,
-                            n_updates, 0, n_syndrome_used, mean_d)
+                            n_updates, 0, n_syndrome_used, mean_d,
+                            sum_F_obs, sum_M_sq)
         else:
             if block1_d > 0 or block2_d > 0 or block3_d > 0:
                 n_rejected += 1
                 continue
 
             n_accepted += 1
+            # Rejection sampling only retains d=0 across all blocks, so N_eff = N_total each round.
+            sum_F_obs += 4.0 * (M_evol ** 2) * (N_total ** 2)
+            sum_M_sq += M_evol ** 2
 
-            phi_eff_true = float(phi_eff_true_all[i])
+            if marginalize_noise:
+                phi_eff_true = float(np.sum(phi_k_shot))
+            else:
+                phi_eff_true = float(phi_eff_true_all[i])
 
             p_plus = (1.0 + np.cos(2.0 * phi_eff_true)) / 2.0
             outcome = 0 if uniforms_outcome[i] < p_plus else 1
@@ -286,26 +415,38 @@ def simulate_for_epsilon(epsilon, omega_true, gamma_mean, h,
                 )
             phi_eff_grid = phi_eff_cache[M_evol]
 
-            logpk = bayesian_update(logpk, phi_eff_grid, outcome)
+            if marg_inference:
+                # Rejection-sampled rounds have all blocks accepted (d=0), so N_clean = N_total.
+                log_visibility = -2.0 * (M_evol ** 2) * N_total * (sigma_epsilon ** 2)
+                logpk = bayesian_update_marg(
+                    logpk, phi_eff_grid, outcome, jnp.float32(log_visibility)
+                )
+            else:
+                logpk = bayesian_update(logpk, phi_eff_grid, outcome)
 
             if n_accepted % CHECK_FREQUENCY == 0 or i == MAX_EXPERIMENTS - 1:
                 _, error = compute_estimate_and_error(logpk, xs, omega_jax)
                 error_val = float(error)
                 if error_val < epsilon * CONVERGENCE_TOLERANCE:
                     return (total_physical_resources, True, error_val, N_total,
-                            n_accepted, n_rejected, 0, 0.0)
+                            n_accepted, n_rejected, 0, 0.0,
+                            sum_F_obs, sum_M_sq)
 
     _, error = compute_estimate_and_error(logpk, xs, omega_jax)
     if full_likelihood:
         mean_d = sum_d / n_updates if n_updates > 0 else 0.0
         return (total_physical_resources, False, float(error), N_total,
-                n_updates, 0, n_syndrome_used, mean_d)
+                n_updates, 0, n_syndrome_used, mean_d,
+                sum_F_obs, sum_M_sq)
     return (total_physical_resources, False, float(error), N_total,
-            n_accepted, n_rejected, 0, 0.0)
+            n_accepted, n_rejected, 0, 0.0,
+            sum_F_obs, sum_M_sq)
 
 
 def run_simulation(seed, gamma_mean, h, sigma_epsilon, L, extended,
-                    full_likelihood=False, save_rounds=False):
+                    full_likelihood=False, save_rounds=False,
+                    no_syndrome_factor=False, marginalize_noise=False,
+                    marg_inference_only=False):
     """Run combined protocol across all epsilon values."""
     omega_true = 0.3
     N_code = 2 * L + 1
@@ -380,17 +521,37 @@ def run_simulation(seed, gamma_mean, h, sigma_epsilon, L, extended,
 
         try:
             (total_resources, converged, final_error, n_total,
-             n_accepted, n_rejected, n_synd, mean_d) = simulate_for_epsilon(
+             n_accepted, n_rejected, n_synd, mean_d,
+             sum_F_obs, sum_M_sq) = simulate_for_epsilon(
                 eps, omega_true, gamma_mean, h,
                 L, m, eps_rng, epsilons_np,
                 full_likelihood=full_likelihood,
-                save_rounds_file=rounds_file
+                save_rounds_file=rounds_file,
+                no_syndrome_factor=no_syndrome_factor,
+                marginalize_noise=marginalize_noise,
+                marg_inference=(marginalize_noise or marg_inference_only),
+                sigma_epsilon=sigma_epsilon,
             )
         finally:
             if rounds_file is not None:
                 rounds_file.close()
 
-        mode_label = 'combined_full_likelihood' if full_likelihood else 'combined'
+        if full_likelihood:
+            if marginalize_noise:
+                mode_label = 'combined_full_likelihood_marg'
+            elif marg_inference_only:
+                mode_label = 'combined_full_likelihood_marg_qt'
+            elif no_syndrome_factor:
+                mode_label = 'combined_full_likelihood_cond_only'
+            else:
+                mode_label = 'combined_full_likelihood'
+        else:
+            if marginalize_noise:
+                mode_label = 'combined_marg'
+            elif marg_inference_only:
+                mode_label = 'combined_marg_qt'
+            else:
+                mode_label = 'combined'
         results.append({
             'seed': seed,
             'gamma': gamma_mean,
@@ -409,6 +570,8 @@ def run_simulation(seed, gamma_mean, h, sigma_epsilon, L, extended,
             'acceptance_rate': n_accepted / max(1, n_accepted + n_rejected),
             'n_syndrome_used': n_synd,
             'mean_d': mean_d,
+            'sum_F_obs': sum_F_obs,
+            'sum_M_sq': sum_M_sq,
             'timestamp': pd.Timestamp.now().isoformat(),
         })
 
@@ -449,7 +612,31 @@ def main():
                         help="Use full-likelihood inference (all rounds, syndrome-adjusted)")
     parser.add_argument("--save-rounds", action='store_true',
                         help="Save per-round data to results/rounds/")
+    parser.add_argument("--no-syndrome-factor", action='store_true',
+                        help="Combined-FL ablation: skip syndrome-prob factor "
+                             "(cond-only). Use with --full-likelihood.")
+    parser.add_argument("--marginalize-noise", action='store_true',
+                        help="§9.1.3 'marg setting': per-shot epsilon_k resampling on "
+                             "the truth side AND marg-inference (visibility-damped "
+                             "likelihood). Tests truth+inference both marginalized.")
+    parser.add_argument("--marg-inference-only", action='store_true',
+                        help="Quenched-truth + marg-inference: epsilon_k fixed per "
+                             "device on the truth side, but inference uses the "
+                             "Lemma 5.3 visibility-damped likelihood. Directly tests "
+                             "the §9.1.3 lemma claim that quenched and marg agree to "
+                             "leading order in N_total sigma^2 = o(1).")
     args = parser.parse_args()
+    if args.no_syndrome_factor and not args.full_likelihood:
+        parser.error("--no-syndrome-factor requires --full-likelihood")
+    if args.no_syndrome_factor and args.marginalize_noise:
+        parser.error("--no-syndrome-factor and --marginalize-noise are mutually "
+                     "exclusive (use separate runs to compare)")
+    if args.marginalize_noise and args.marg_inference_only:
+        parser.error("--marginalize-noise and --marg-inference-only are mutually "
+                     "exclusive (different truth models)")
+    if args.no_syndrome_factor and args.marg_inference_only:
+        parser.error("--no-syndrome-factor and --marg-inference-only are mutually "
+                     "exclusive")
 
     output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'results')
     os.makedirs(output_dir, exist_ok=True)
@@ -457,9 +644,22 @@ def main():
     df = run_simulation(args.seed, args.gamma, args.h, args.sigma_epsilon,
                         args.L, args.extended,
                         full_likelihood=args.full_likelihood,
-                        save_rounds=args.save_rounds)
+                        save_rounds=args.save_rounds,
+                        no_syndrome_factor=args.no_syndrome_factor,
+                        marginalize_noise=args.marginalize_noise,
+                        marg_inference_only=args.marg_inference_only)
 
-    if args.full_likelihood:
+    if args.no_syndrome_factor:
+        output_file = os.path.join(output_dir, 'combined_full_likelihood_cond_only.csv')
+    elif args.marginalize_noise and args.full_likelihood:
+        output_file = os.path.join(output_dir, 'combined_full_likelihood_marg.csv')
+    elif args.marg_inference_only and args.full_likelihood:
+        output_file = os.path.join(output_dir, 'combined_full_likelihood_marg_qt.csv')
+    elif args.marginalize_noise:
+        output_file = os.path.join(output_dir, 'combined_postselect_marg.csv')
+    elif args.marg_inference_only:
+        output_file = os.path.join(output_dir, 'combined_postselect_marg_qt.csv')
+    elif args.full_likelihood:
         output_file = os.path.join(output_dir, 'combined_full_likelihood.csv')
     else:
         output_file = os.path.join(output_dir, 'combined_postselect.csv')

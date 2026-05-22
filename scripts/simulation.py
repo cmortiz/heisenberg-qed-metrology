@@ -57,12 +57,15 @@ def ghz_simulate_outcome(gammas, n, omega, uniform):
 
 @jit
 def ghz_bayesian_update(logpk, j_grid, gammas, n, outcome, grid_size):
-    """Bayesian update for one GHZ measurement using integer-mod phase indexing."""
+    """Bayesian update for one GHZ measurement using integer-mod phase indexing.
+
+    Grid: xs[j] = pi * j / grid_size (Fix A6, [0, pi) range). Likelihood is
+    cos(2*n*xs[j]) = cos(2*pi*n*j/grid_size); the bitmask gives exact mod
+    against grid_size-1, safe even if n*j overflows int32."""
     log_vn = ghz_log_visibility(gammas, n)
     vn = jnp.exp(log_vn)
     sign = jnp.where(outcome == 0, 1.0, -1.0)
-    # Bitwise AND = exact mod for power-of-2 grid, safe even if 2*n*j overflows int32
-    phase_idx = (2 * n * j_grid) & (grid_size - 1)
+    phase_idx = (n * j_grid) & (grid_size - 1)
     cos_2n = jnp.cos(2.0 * jnp.pi * phase_idx / grid_size)
     likelihood = (1.0 + sign * vn * cos_2n) / 2.0
     log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
@@ -111,9 +114,14 @@ def product_bayesian_update_heterogeneous(logpk, xs, gammas, n, outcomes):
 
 @jit
 def circular_distance(phi, theta):
-    """Circular phase distance on [0, 2*pi) (Theorem 7)."""
+    """Circular phase distance on [0, pi).
+
+    The likelihood cos(2 n omega) is pi-periodic in omega (since cos has period
+    2*pi and the argument is doubled), so omega and omega + pi are observationally
+    indistinguishable. We restrict the prior/grid to [0, pi) (Fix A6) and use the
+    matching pi-modular distance here."""
     diff = jnp.abs(phi - theta)
-    return jnp.minimum(diff, 2.0 * jnp.pi - diff)
+    return jnp.minimum(diff, jnp.pi - diff)
 
 
 @jit
@@ -130,7 +138,9 @@ def simulate_for_epsilon(epsilon, phi, gamma, h, mode, m, rng):
     N = max(MIN_N, min(N, MAX_N))
 
     grid_size = 2 ** m
-    xs = jnp.linspace(0, 2 * jnp.pi, grid_size, endpoint=False, dtype=jnp.float32)
+    # Grid restricted to [0, pi) since the likelihood cos(2 n omega) is pi-periodic
+    # in omega (Fix A6); omega and omega + pi are observationally indistinguishable.
+    xs = jnp.linspace(0, jnp.pi, grid_size, endpoint=False, dtype=jnp.float32)
     j_grid = jnp.arange(grid_size, dtype=jnp.int32)
 
     logpk = jnp.full(grid_size, -m * jnp.log(2.0), dtype=jnp.float32)
