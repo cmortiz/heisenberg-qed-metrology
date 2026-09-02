@@ -53,10 +53,18 @@ def candidates(key: str):
             yield key[: -len(a)] + b
 
 
+FIELDS = ("n_seeds", "sem", "n_rows")     # "<key>.<field>" reads a field of the entry at <key>
+
+
 def lookup(numbers: dict, key: str):
     for c in candidates(key):
         if c in numbers:
             return c, numbers[c]
+    head, _, field = key.rpartition(".")
+    if field in FIELDS:
+        c, e = lookup(numbers, head)
+        if isinstance(e, dict) and e.get(field) is not None:
+            return f"{c}.{field}", {"value": e[field]}
     return None, None
 
 
