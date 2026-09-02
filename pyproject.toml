@@ -1,13 +1,25 @@
 [project]
-name = "quantum-sensing-gpu"
-version = "0.1.0"
-description = "GPU-accelerated quantum sensing simulations"
-requires-python = ">=3.10,<3.13"
+name = "eqsp-numerics"
+version = "2.0.0"
+description = "Bayesian phase-estimation numerics for Encoded Quantum Signal Processing (EQSP)"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "numpy>=1.24",
+    "numpy>=1.26",
     "pandas>=2.0",
-    "scipy>=1.10",
-    "matplotlib>=3.5",
+    "scipy>=1.11",
+    "matplotlib>=3.7",
     "tqdm>=4.65",
-    "jax[cuda12]>=0.4.30",
+    "jax>=0.9",
 ]
+
+[project.optional-dependencies]
+cuda = ["jax[cuda13]>=0.9"]
+test = ["pennylane>=0.40", "pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not regression'"
+markers = ["regression: diagnostic comparison against committed v1 CSVs (reported, never gating)"]
+
+[tool.uv]
+package = false
