@@ -50,7 +50,7 @@ V1_FILES = {
 PROTOCOLS = ["bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow"]   # v2 files: results/v2/<protocol>.csv
 # sentinel for group keys that a protocol does not use (NaN keys would drop rows in groupby)
 KEY_FILL = {"gamma": 0.0, "h": 0.0, "sigma_epsilon": 0.0, "L": 0, "q": 0.0, "k": 1.0, "F": 1.0,
-            "estimator": "mismatched", "model": "legacy"}
+            "estimator": "mismatched", "model": "legacy", "stop_rule": "legacy"}
 TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]
 FIG1_BARE_GAMMAS = [0.01, 0.05, 0.10]
 FIG3_CELLS = [(1, 0.01, 0.01), (1, 0.10, 0.01), (2, 0.10, 0.01)]

@@ -14,12 +14,16 @@ MIN_N_ADAPTIVE = 10             # legacy simulation.py:138
 @dataclass(frozen=True)
 class EngineConfig:
     """Per-protocol loop constants (legacy anchors in the plan, 'Engine contract')."""
-    max_experiments: int                      # 10000 bare_adaptive; 50000 bare_fixed/ed/combined; 200000 hwindow
+    max_experiments: int                      # 10000 bare_adaptive; 50000 bare_fixed/ed/combined; 2000000 hwindow
     check_every: int                          # 100 (bare, ed-ps) or 10 (ed-fl, combined-fl)
     check_counter: Literal["round0", "round1", "update"]
     tolerance: float = 1.2                    # converge when |omega_hat - omega|_circ < tolerance * eps
     track_best_error: bool = False            # True only for bare_adaptive
     cache_mb: int = 2048
+    stop: Literal["posterior", "legacy"] = "posterior"
+        # posterior: truth-free stop when the posterior 95% half-width (2 std) <= eps, checked
+        #   every update; converged iff |MAP - omega|_circ < tolerance * eps at the stop.
+        # legacy: stop at the first check (legacy cadence) with |MAP - omega|_circ < tolerance * eps.
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,7 @@ class RunSpec:
     extended: bool = False                    # extended eps range (legacy --extended)
     eps_tar: Optional[float] = None           # hwindow: single target eps
     N_fixed: Optional[int] = None             # hwindow: fixed probe size
+    stop: Literal["posterior", "legacy"] = "posterior"   # stopping rule (see EngineConfig.stop)
 
     @property
     def N_code(self) -> int:
@@ -96,6 +101,7 @@ CSV_COLUMNS = [
     "M_max", "M_exec_max", "grid_m", "total_resources", "converged", "final_error",
     "n_rounds", "n_updates", "n_accepted", "n_rejected", "acceptance_rate",
     "n_syndrome_used", "mean_d", "sum_F_obs", "sum_M_sq", "visibility",
+    "stop_rule", "posterior_std",
     "engine_version", "jax_version", "timestamp",
 ]
-GROUP_KEYS = ["protocol", "mode", "gamma", "h", "sigma_epsilon", "L", "q", "k", "F", "estimator", "model"]
+GROUP_KEYS = ["protocol", "mode", "gamma", "h", "sigma_epsilon", "L", "q", "k", "F", "estimator", "model", "stop_rule"]

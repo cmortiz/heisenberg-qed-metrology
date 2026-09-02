@@ -31,7 +31,7 @@ class BareAdaptive:
         if spec.h != 0.0:
             raise ValueError("bare_adaptive: heterogeneous gamma (h > 0) is not supported (dropped in v2)")
         self.spec = spec
-        self.cfg = EngineConfig(max_experiments=10000, check_every=100, check_counter="round0",
+        self.cfg = EngineConfig(stop=spec.stop, max_experiments=10000, check_every=100, check_counter="round0",
                                 track_best_error=True)
         self.omega_true = OMEGA_TRUE
         self.gamma = float(spec.gamma)

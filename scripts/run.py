@@ -61,8 +61,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--F", type=float, default=1.0, help="single-qubit init fidelity")
     ap.add_argument("--estimator", choices=["mismatched", "aware"], default="mismatched")
     ap.add_argument("--model", choices=["exact", "theorem"], default="exact")
+    ap.add_argument("--stop", choices=["posterior", "legacy"], default="posterior",
+                    help="stopping rule: posterior (truth-free, 2 std <= eps, every update) or legacy (truth-based at legacy cadence)")
     ap.add_argument("--extended", action="store_true", help="extended eps range (legacy --extended)")
-    ap.add_argument("--eps-tar", type=float, default=1e-3, help="hwindow: single target eps")
+    ap.add_argument("--eps-tar", type=float, default=1e-4, help="hwindow: single target eps")
     ap.add_argument("--N-grid", type=str, default="auto", help="hwindow: 'auto' (12 log-spaced in [N*/16, 4N*]) or N1,N2,...")
     ap.add_argument("--out", type=str, default=None, help="append all rows to this CSV instead of per-seed shards")
     ap.add_argument("--results-dir", type=str, default=str(DEFAULT_RESULTS_DIR))
@@ -76,7 +78,7 @@ def make_spec(args) -> RunSpec:
     return RunSpec(
         protocol=args.protocol, gamma=args.gamma, h=args.h, L=args.L, sigma=args.sigma_eps,
         inference=args.inference, marg=args.marg, q=args.q, k=args.k, F=args.F,
-        estimator=args.estimator, model=args.model, extended=args.extended,
+        estimator=args.estimator, model=args.model, extended=args.extended, stop=args.stop,
         eps_tar=(args.eps_tar if args.protocol == "hwindow" else None),
     )
 

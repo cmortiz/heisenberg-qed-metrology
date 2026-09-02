@@ -38,7 +38,7 @@ class ErrorDetected:
         self.L = spec.L
         if spec.h > 0 and (self.fl or not self.theorem):
             raise ValueError("ed: h > 0 is supported only for inference=ps with model=theorem (ed:157)")
-        self.cfg = EngineConfig(max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
+        self.cfg = EngineConfig(stop=spec.stop, max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
         self.omega_true = OMEGA_TRUE
         self.V = cf.prep_visibility(spec.k, spec.F, self.N)
         self.aware = spec.estimator == "aware"

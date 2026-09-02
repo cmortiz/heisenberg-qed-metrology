@@ -81,28 +81,28 @@ C_ED = C_BASE[:3] + [("n_accepted", "n_accepted"), ("n_rejected", "n_rejected"),
                      ("mean_d", "mean_d"), ("sum_F_obs", "sum_F_obs"), ("sum_M_sq", "sum_M_sq")]   # legacy ED/combined CSVs have no n_rounds
 
 # bare_adaptive vs bare_ghz.csv gamma=0 (legacy has no n_rounds column)
-spec = RunSpec("bare_adaptive", gamma=0.0, model="theorem")
+spec = RunSpec("bare_adaptive", gamma=0.0, model="theorem", stop="legacy")
 bad += compare("bare_adaptive gamma=0 vs bare_ghz.csv", legacy_rows("bare_ghz.csv", gamma=0.0, h=0.0), run_jax(spec, EPS3), C_BASE[:3])
 
 # bare_fixed vs bare_hamiltonian.csv
-spec = RunSpec("bare_fixed", gamma=0.05, L=1, model="theorem")
+spec = RunSpec("bare_fixed", gamma=0.05, L=1, model="theorem", stop="legacy")
 bad += compare("bare_fixed g=0.05 L=1 vs bare_hamiltonian.csv", legacy_rows("bare_hamiltonian.csv", gamma=0.05, L=1), run_jax(spec, EPS3), C_BASE)
 
 # ed fl / ps
-spec = RunSpec("ed", gamma=0.05, L=1, inference="fl", model="theorem")
+spec = RunSpec("ed", gamma=0.05, L=1, inference="fl", model="theorem", stop="legacy")
 bad += compare("ed fl g=0.05 L=1 vs ed_full_likelihood.csv", legacy_rows("ed_full_likelihood.csv", gamma=0.05, L=1), run_jax(spec, EPS3), C_ED)
-spec = RunSpec("ed", gamma=0.05, L=1, inference="ps", model="theorem")
+spec = RunSpec("ed", gamma=0.05, L=1, inference="ps", model="theorem", stop="legacy")
 bad += compare("ed ps g=0.05 L=1 vs ed_postselect.csv", legacy_rows("ed_postselect.csv", gamma=0.05, L=1), run_jax(spec, EPS3), C_ED)
 
 # combined fl
-spec = RunSpec("combined", gamma=0.05, L=1, sigma=0.01, inference="fl", model="theorem")
+spec = RunSpec("combined", gamma=0.05, L=1, sigma=0.01, inference="fl", model="theorem", stop="legacy")
 bad += compare("combined fl g=0.05 L=1 s=0.01 vs combined_full_likelihood.csv",
                legacy_rows("combined_full_likelihood.csv", gamma=0.05, L=1, sigma_epsilon=0.01), run_jax(spec, EPS3), C_ED)
 
 # sequential: all configs, all eps, exact
 for L in (1, 2, 3):
     for sigma in (0.0, 0.01, 0.05):
-        spec = RunSpec("sequential", L=L, sigma=sigma, model="theorem")
+        spec = RunSpec("sequential", L=L, sigma=sigma, model="theorem", stop="legacy")
         new = pd.DataFrame(Sequential(spec).run_seed(SEED, EPS_ALL, "spot"))
         leg = legacy_rows("sequential.csv", L=L, sigma_epsilon=sigma)
         cols = C_BASE + [("M_max", "M_max_used")]

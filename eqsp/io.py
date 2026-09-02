@@ -57,6 +57,8 @@ def config_key(spec: RunSpec) -> str:
     ]
     if spec.extended:
         parts.append("ext")
+    if spec.stop == "legacy":
+        parts.append("legacy")
     if spec.protocol == "hwindow":
         parts.append(f"eps{_g(spec.eps_tar)}")
     return "_".join(parts)
@@ -107,6 +109,8 @@ def make_row(spec: RunSpec, seed: int, eps: float, result, engine_version: str, 
         "sum_F_obs": float(ctr.sum_F_obs),
         "sum_M_sq": float(ctr.sum_M_sq),
         "M_exec_max": int(ctr.M_exec_max) if ctr.M_exec_max > 0 else nan,
+        "stop_rule": spec.stop,
+        "posterior_std": getattr(ctr, "posterior_std", nan),
         "engine_version": engine_version,
         "jax_version": jax_version,
         "timestamp": pd.Timestamp.now().isoformat(),

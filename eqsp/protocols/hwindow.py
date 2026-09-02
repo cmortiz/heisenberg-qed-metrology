@@ -38,7 +38,14 @@ class HWindow:
         self.N = int(spec.N_fixed)
         self.sigma = float(spec.sigma)
         self.period = float(np.pi / self.N)
-        self.cfg = EngineConfig(max_experiments=200000, check_every=1, check_counter="round0")
+        self.cfg = EngineConfig(stop=spec.stop, max_experiments=2_000_000, check_every=10, check_counter="round0")
+        # The prior is one period pi/N wide and the error is period-pi/N circular, so a
+        # target with 1.2 eps_tar comparable to pi/(2N) converges trivially.  Require a
+        # factor 20 between period and tolerance (chupacabras quick run 2026-09-02 showed
+        # 100% "convergence" after ~1 shot at eps_tar = 1e-3, N = 800).
+        if math.pi / spec.N_fixed < 20.0 * self.cfg.tolerance * spec.eps_tar:
+            raise ValueError(f"hwindow: period pi/N = {math.pi/spec.N_fixed:.3g} is not >> tolerance "
+                             f"{self.cfg.tolerance*spec.eps_tar:.3g} at N = {spec.N_fixed}; lower eps_tar")
         self.omega_true = OMEGA_TRUE % self.period
         self.V = cf.prep_visibility(spec.k, spec.F, self.N)
         self.log_lambda = -2.0 * self.N * self.sigma**2

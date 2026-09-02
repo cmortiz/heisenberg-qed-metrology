@@ -4,11 +4,12 @@
 by skipping existing shards, and merges shards into results/v2/<protocol>.csv.
 
   suite.py [--seeds 1-40] [--only 1,3,7] [--quick] [--dry-run] [--merge] [--label NAME]
-           [--gpu-slots 24] [--cpu-slots 64] [--n-gpus auto|N] [--mem-fraction 0.08]
+           [--gpu-slots 22] [--cpu-slots 64] [--n-gpus auto|N] [--mem-fraction 0.08]
            [--cpu-protocols sequential[,bare_adaptive,hwindow]] [--results-dir DIR]
 
 GPU pool: slot s runs on CUDA_VISIBLE_DEVICES = s % n_gpus with
-XLA_PYTHON_CLIENT_PREALLOCATE=true, XLA_PYTHON_CLIENT_MEM_FRACTION=0.08 and a
+XLA_PYTHON_CLIENT_PREALLOCATE=true, XLA_PYTHON_CLIENT_MEM_FRACTION=0.08 (11 slots per
+card = 88% preallocated; 12 slots per card OOM at CUBIN load, chupacabras 2026-09-02) and a
 shared JAX_COMPILATION_CACHE_DIR; one warm-up process per GPU per distinct
 (protocol, grid m) populates the cache before the pool opens.  CPU pool:
 OMP_NUM_THREADS=1, single-thread XLA, --device cpu.  Without GPUs everything
@@ -50,7 +51,7 @@ SEQ_GRID = [(1, 0.0), (1, 0.01), (1, 0.05), (2, 0.0), (2, 0.01), (2, 0.05), (3, 
 MARG_CONFIGS = [(1, 0.01, 0.01)]                     # plan table group 4 (run_suite.sh:299-302 lists L in {1,2} at gamma 0.05)
 BARE_ADAPTIVE_GAMMAS = [0.0, 0.01, 0.05, 0.10]
 WINDOW_SIGMAS = [0.05, 0.10]
-WINDOW_EPS = 1e-3
+WINDOW_EPS = 1e-4   # one period pi/N must stay >> tolerance up to N = 4 N* = 800 (1e-3 was trivially convergent there)
 READOUT_QS = [1e-3, 1e-2, 3e-2]
 PREP_KS = [0.99, 0.995, 0.999]
 PREP_F = 0.99
@@ -308,7 +309,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--merge", action="store_true", help="merge shards into results/v2/<protocol>.csv and exit")
     ap.add_argument("--label", default=None)
-    ap.add_argument("--gpu-slots", type=int, default=24)
+    ap.add_argument("--gpu-slots", type=int, default=22)
     ap.add_argument("--cpu-slots", type=int, default=64)
     ap.add_argument("--n-gpus", default="auto")
     ap.add_argument("--mem-fraction", type=float, default=0.08)

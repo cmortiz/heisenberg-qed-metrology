@@ -44,7 +44,7 @@ class Combined:
         self.N = N_BLOCKS * self.Nc
         self.L = spec.L
         self.sigma = float(spec.sigma)
-        self.cfg = EngineConfig(max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
+        self.cfg = EngineConfig(stop=spec.stop, max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
         self.omega_true = OMEGA_TRUE
         self.V = cf.prep_visibility(spec.k, spec.F, self.Nc) ** N_BLOCKS      # product over blocks
         self.aware = spec.estimator == "aware"

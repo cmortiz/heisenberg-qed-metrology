@@ -28,7 +28,7 @@ class BareFixed:
 
     def __init__(self, spec: RunSpec):
         self.spec = spec
-        self.cfg = EngineConfig(max_experiments=50000, check_every=100, check_counter="round1")
+        self.cfg = EngineConfig(stop=spec.stop, max_experiments=50000, check_every=100, check_counter="round1")
         self.omega_true = OMEGA_TRUE
         self.N = spec.N_code
         if self.N % 2 == 0:

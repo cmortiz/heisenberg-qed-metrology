@@ -205,7 +205,8 @@ class ToyProtocol:
 
 
 def _cfg(**kw):
-    base = dict(max_experiments=20, check_every=1, check_counter="round0", tolerance=1.2, track_best_error=False)
+    base = dict(max_experiments=20, check_every=1, check_counter="round0", tolerance=1.2, track_best_error=False,
+                stop="legacy")
     base.update(kw)
     return EngineConfig(**base)
 
@@ -318,3 +319,78 @@ def test_tolerance_is_strict_multiple_of_eps():
         p = ToyProtocol(_cfg(max_experiments=3), m=m, script={i: idx for i in range(3)})
         res = _run(p, eps=eps)
         assert bool(res.converged) is expect, (eps, err, float(res.error))
+
+
+# ---------------------------------------------------------------------------
+# posterior (truth-free) stopping rule
+# ---------------------------------------------------------------------------
+
+def _gauss_logpk(xs, center, std, period):
+    x = np.asarray(xs, np.float64)
+    d = x - center
+    d = d - period * np.round(d / period)
+    return jnp.asarray(-0.5 * (d / std) ** 2, dtype=jnp.float32)
+
+
+@pytest.mark.parametrize("std", [3e-2, 1e-3, 5e-5])
+def test_posterior_stats_recovers_gaussian_std_and_map_error(std):
+    """Circular std from wrapped displacements stays accurate in float32 down to
+    std ~ 1e-5 rad (the resultant-length route, 1 - R, cannot resolve these)."""
+    m = 20
+    period = 2 * math.pi
+    xs = engine.make_grid(m, period, "np64")
+    center = OMEGA + 4 * std
+    err, s = engine.posterior_stats(_gauss_logpk(xs, center, std, period), xs, OMEGA, period=period)
+    assert abs(float(err) - 4 * std) < 2 * period / 2**m + 1e-6
+    assert abs(float(s) / std - 1.0) < 2e-2
+
+
+class GaussToy(ToyProtocol):
+    """Posterior after update i is a wrapped Gaussian centred at ``center`` with
+    std ``widths[i]`` (last width repeats)."""
+
+    def __init__(self, cfg, m, widths, center=OMEGA):
+        super().__init__(cfg, m)
+        self.widths = widths
+        self.center = center
+
+    def apply(self, logpk, shot):
+        i = min(shot.aux["i"], len(self.widths) - 1)
+        self.apply_calls.append(shot.aux["i"])
+        return _gauss_logpk(self.xs, self.center, self.widths[i], self.period)
+
+
+def test_posterior_rule_ignores_lucky_map_hits_while_posterior_is_wide():
+    """MAP sits exactly on the truth from the first update, but the posterior is
+    10x wider than the target: the legacy rule stops at once, the posterior rule
+    waits until 2 std <= eps."""
+    eps = 1e-3
+    widths = [10 * eps, 5 * eps, 2 * eps, eps, 0.5 * eps, 0.1 * eps]
+    legacy = GaussToy(_cfg(max_experiments=10), m=18, widths=widths)
+    res_l = _run(legacy, eps=eps)
+    assert res_l.converged and _ctr(res_l).n_updates == 1
+    post = GaussToy(_cfg(max_experiments=10, stop="posterior"), m=18, widths=widths)
+    res_p = _run(post, eps=eps)
+    ctr = _ctr(res_p)
+    assert res_p.converged
+    assert ctr.n_updates == 5                      # first update with 2 * width <= eps
+    assert ctr.posterior_std <= 0.5 * eps
+    assert ctr.resources == 7 * 5
+
+
+def test_posterior_rule_stop_with_wrong_map_is_not_converged():
+    eps = 1e-3
+    post = GaussToy(_cfg(max_experiments=10, stop="posterior"), m=18, widths=[0.1 * eps], center=OMEGA + 5 * eps)
+    res = _run(post, eps=eps)
+    ctr = _ctr(res)
+    assert not res.converged and ctr.n_updates == 1
+    assert abs(float(res.error) - 5 * eps) < 1e-4
+
+
+def test_posterior_rule_exhausting_budget_is_not_converged_and_records_std():
+    p = ToyProtocol(_cfg(max_experiments=6, stop="posterior"), m=12, flat=True)
+    res = _run(p, eps=1e-2)
+    ctr = _ctr(res)
+    assert not res.converged and ctr.n_rounds == 6 and ctr.n_updates == 6
+    assert abs(ctr.posterior_std - 2 * math.pi / math.sqrt(12)) < 1e-2   # uniform on the circle
+    assert p.check_calls == []                                            # cadence never consulted

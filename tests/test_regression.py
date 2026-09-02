@@ -50,21 +50,21 @@ KEY_COLS = ["total_resources", "converged", "final_error"]
 
 # one cell per protocol / legacy mode: (RunSpec, committed csv, committed row filter)
 CELLS = [
-    ("bare_adaptive_g0", RunSpec("bare_adaptive", gamma=0.0, model="theorem"), "bare_ghz.csv",
+    ("bare_adaptive_g0", RunSpec("bare_adaptive", gamma=0.0, model="theorem", stop="legacy"), "bare_ghz.csv",
      dict(gamma=0.0, h=0.0, mode="ghz")),
-    ("bare_fixed_L1_g0.05", RunSpec("bare_fixed", gamma=0.05, L=1, model="theorem"), "bare_hamiltonian.csv",
+    ("bare_fixed_L1_g0.05", RunSpec("bare_fixed", gamma=0.05, L=1, model="theorem", stop="legacy"), "bare_hamiltonian.csv",
      dict(gamma=0.05, h=0.0, L=1, mode="bare_hamiltonian")),
-    ("ed_fl_L1_g0.01", RunSpec("ed", gamma=0.01, L=1, inference="fl", model="theorem"), "ed_full_likelihood.csv",
+    ("ed_fl_L1_g0.01", RunSpec("ed", gamma=0.01, L=1, inference="fl", model="theorem", stop="legacy"), "ed_full_likelihood.csv",
      dict(gamma=0.01, h=0.0, L=1, mode="full_likelihood")),
-    ("ed_ps_L1_g0.01", RunSpec("ed", gamma=0.01, L=1, inference="ps", model="theorem"), "ed_postselect.csv",
+    ("ed_ps_L1_g0.01", RunSpec("ed", gamma=0.01, L=1, inference="ps", model="theorem", stop="legacy"), "ed_postselect.csv",
      dict(gamma=0.01, h=0.0, L=1, mode="error_detected")),
-    ("combined_fl_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="fl", model="theorem"),
+    ("combined_fl_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="fl", model="theorem", stop="legacy"),
      "combined_full_likelihood.csv", dict(gamma=0.01, h=0.0, sigma_epsilon=0.01, L=1, mode="combined_full_likelihood")),
-    ("combined_ps_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="ps", model="theorem"),
+    ("combined_ps_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="ps", model="theorem", stop="legacy"),
      "combined_postselect.csv", dict(gamma=0.01, h=0.0, sigma_epsilon=0.01, L=1, mode="combined")),
-    ("combined_marg_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="fl", marg=True, model="theorem"),
+    ("combined_marg_L1_g0.01_s0.01", RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="fl", marg=True, model="theorem", stop="legacy"),
      "combined_full_likelihood_marg.csv", dict(gamma=0.01, h=0.0, sigma_epsilon=0.01, L=1, mode="combined_full_likelihood_marg")),
-    ("sequential_L1_s0", RunSpec("sequential", L=1, sigma=0.0, model="theorem"), "sequential.csv",
+    ("sequential_L1_s0", RunSpec("sequential", L=1, sigma=0.0, model="theorem", stop="legacy"), "sequential.csv",
      dict(sigma_epsilon=0.0, L=1, mode="sequential")),
 ]
 
@@ -75,7 +75,7 @@ CELLS = [
 def _spec_cli_args(spec: RunSpec):
     args = ["--gamma", repr(spec.gamma), "--L", str(spec.L), "--sigma-eps", repr(spec.sigma),
             "--model", spec.model, "--q", repr(spec.q), "--k", repr(spec.k), "--F", repr(spec.F),
-            "--estimator", spec.estimator]
+            "--estimator", spec.estimator, "--stop", spec.stop]
     if spec.protocol in ("ed", "combined"):
         args += ["--inference", spec.inference]
     if spec.marg:
@@ -164,16 +164,8 @@ def _rows_in_process(spec, seed, eps_list):
         else:
             engine = pytest.importorskip("eqsp.engine")
             res = engine.run_epsilon(p, eps, rng)
-        ctr = getattr(res, "ctr", getattr(res, "counters", res))
-        row = None
-        if hasattr(p, "row"):
-            try:
-                row = p.row(ctr, bool(res.converged), float(res.error))
-            except Exception:
-                row = None
-        if row is None:
-            row = dict(total_resources=getattr(ctr, "resources", np.nan), converged=bool(res.converged),
-                       final_error=float(res.error))
+        # the adapter's row() is partial; make_row fills every CSV column
+        row = eio.make_row(spec, seed, eps, res, "test", "none")
         rows[eps] = pd.Series(row)
     return rows, "in-process engine.run_epsilon"
 

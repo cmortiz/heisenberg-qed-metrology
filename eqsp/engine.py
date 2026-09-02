@@ -66,6 +66,26 @@ def map_error(logpk, xs, omega_true, period: float):
     return jnp.minimum(diff, period - diff)
 
 
+@partial(jit, static_argnames=("period",))
+def posterior_stats(logpk, xs, omega_true, period: float):
+    """(MAP circular error, posterior circular std) for the truth-free stopping
+    rule.  The std is the root of the posterior second moment of the wrapped
+    displacement from the MAP, d_j = wrap(x_j - x_MAP) in (-period/2, period/2];
+    computing it from displacements (not from the resultant length 1 - R, which
+    float32 cannot resolve below std ~ 1e-3 period) keeps float32 accurate down
+    to std ~ 1e-6 period."""
+    idx = jnp.argmax(logpk)
+    estimate = xs[idx]
+    diff = jnp.abs(omega_true - estimate)
+    err = jnp.minimum(diff, period - diff)
+    w = jnp.exp(logpk - logsumexp(logpk))
+    d = xs - estimate
+    d = d - period * jnp.round(d / period)
+    m1 = jnp.sum(w * d)
+    m2 = jnp.sum(w * d * d)
+    return err, jnp.sqrt(jnp.maximum(m2 - m1 * m1, 0.0))
+
+
 class GridCache:
     """Per-key grid arrays with the legacy clear-when-full eviction (bh:182-184,
     ed:247-249, cb:343-345).  max entries = cache_mb / (grid_size * 4 bytes),
@@ -106,6 +126,7 @@ class Counters:
     sum_M_sq: float = 0.0
     M_exec_max: int = 0
     best_error: float = math.inf
+    posterior_std: float = math.nan
 
 
 @dataclass
@@ -175,6 +196,8 @@ def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> Ep
     threshold = cfg.tolerance * eps
     last = cfg.max_experiments - 1
     err = math.nan
+    posterior_mode = cfg.stop == "posterior"
+    stop_std = 0.5 * eps                          # 95% credible half-width (2 std) <= eps
     for i in range(cfg.max_experiments):
         shot = p.draw(i)
         ctr.resources += shot.cost
@@ -188,6 +211,14 @@ def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> Ep
         ctr.n_updates += 1
         ctr.n_accepted += 1
         p.account(shot, ctr)
+        if posterior_mode:
+            e, s = posterior_stats(logpk, p.xs, omega, period=p.period)
+            err, std = float(e), float(s)
+            ctr.posterior_std = std
+            if std <= stop_std:
+                conv = err < threshold
+                return EpsResult(conv, err, ctr, p.row(ctr, conv, err))
+            continue
         if p.check_due(i, ctr) or i == last:
             err = float(map_error(logpk, p.xs, omega, period=p.period))
             if cfg.track_best_error and err < ctr.best_error:
@@ -195,6 +226,10 @@ def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> Ep
             if err < threshold:
                 return EpsResult(True, err, ctr, p.row(ctr, True, err))
     # Exhausted max_experiments: never converged (bh:198-199, ed:306, cb:435; sim:204).
+    if posterior_mode:
+        e, s = posterior_stats(logpk, p.xs, omega, period=p.period)
+        err, ctr.posterior_std = float(e), float(s)
+        return EpsResult(False, err, ctr, p.row(ctr, False, err))
     err = float(map_error(logpk, p.xs, omega, period=p.period))
     if cfg.track_best_error:
         if err < ctr.best_error:
