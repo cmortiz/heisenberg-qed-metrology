@@ -116,7 +116,7 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
 | 3 | `ed`, same grid $\times$ {fl, ps} | 18 |
 | 4 | `combined`, $L \in \{1,2\} \times \gamma \times \sigma_\varepsilon \in \{0.01, 0.05\} \times$ {fl, ps}, plus marg at $(1, 0.01, 0.01)$ | 25 |
 | 5 | `sequential`, $L \in \{1,2,3\} \times \sigma_\varepsilon \in \{0, 0.01, 0.05\}$ | 9 |
-| 6 | `hwindow`, $\sigma_\varepsilon \in \{0.05, 0.10\}$, $\varepsilon_{\rm tar} = 10^{-3}$, 12 N values in $[N^*/16, 4N^*]$ | 2 |
+| 6 | `hwindow`, $\sigma_\varepsilon \in \{0.05, 0.10\}$, $\varepsilon_{\rm tar} = 4 \times 10^{-2}\sigma_\varepsilon^2$ ($10^{-4}$, $4 \times 10^{-4}$), 12 N values in $[N^*/16, 4N^*]$ | 2 |
 | 7 | readout $q \in \{10^{-3}, 10^{-2}, 3\cdot10^{-2}\} \times$ {mismatched, aware} $\times$ {bare_adaptive $\gamma{=}0.10$, ed-fl $L{=}1..3$, combined-fl $L{=}1,2$ $\sigma{=}0.01$}, plus sequential $L{=}1..3$ (q only) | 45 |
 | 8 | prep $k \in \{0.99, 0.995, 0.999\}$, $F = 0.99$, same protocols and estimators; sequential $F$ only | 39 |
 
@@ -170,7 +170,7 @@ all 60 targets of every seed. Every `numbers.json` entry carries `window`,
 `min_points`, `source_csv`, `n_seeds`. `plot.py` performs no fit: slopes, intercepts,
 and CI widths come from `numbers.json`; the CSVs supply only the data markers.
 Outputs: `fig1_error_detection`, `fig2_inference_comparison`, `fig3_combined_protocol`,
-`fig4_window`, `fig5_realistic`.
+`fig4_heisenberg_window`, `fig5_realistic`.
 
 ## Tests
 

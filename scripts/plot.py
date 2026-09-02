@@ -294,7 +294,7 @@ def figure3(df, nums, out):
 # --------------------------------------------------------------------------- figure 4
 def figure4(df, nums, out):
     """Heisenberg window: T(N) mean (solid) and median (dashed) at sigma in {0.05, 0.10}; N* and N*/2 marked."""
-    print("fig4_window")
+    print("fig4_heisenberg_window")
     hw = df[df["protocol"] == "hwindow"]
     if hw.empty:
         print("  skip: no hwindow rows")
@@ -337,7 +337,7 @@ def figure4(df, nums, out):
     ax.set_xlabel(r"Probe size $N$")
     ax.set_ylabel(r"Total resources $T$ at $\varepsilon_{\mathrm{tar}} = 10^{-3}$")
     ax.legend(handles=legend, loc="upper left", fontsize=6.3, handlelength=1.8, labelspacing=0.3)
-    save(fig, out, "fig4_window")
+    save(fig, out, "fig4_heisenberg_window")
 
 
 # --------------------------------------------------------------------------- figure 5

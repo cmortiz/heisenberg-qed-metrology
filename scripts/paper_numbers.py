@@ -31,7 +31,12 @@ ALIASES = [
     (".accept", ".accept_pct"),
     (".comb_", ".combined_"),
     (".seq_", ".sequential_"),
+    (".per_block_accept_", ".per_block_accept_pct_"),
+    (".g0.", ".g0.00."),
+    (".alpha_full", ".alpha"),            # tables whose headline window is the full range
 ]
+# joint acceptance of a table cell = the rejection-mode entry
+EXTRA = [(".accept", ".rej.accept_pct")]
 
 
 def candidates(key: str):
@@ -43,6 +48,9 @@ def candidates(key: str):
     # single-alias variants
     for a, b in ALIASES:
         yield key.replace(a, b)
+    for a, b in EXTRA:
+        if key.endswith(a):
+            yield key[: -len(a)] + b
 
 
 def lookup(numbers: dict, key: str):
@@ -62,6 +70,9 @@ def fmt(key: str, entry) -> str:
     v, sem = _val(entry)
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return r"\textcolor{red}{[NaN " + key + "]}"
+    if isinstance(v, (list, tuple)):                  # [min, max] range: "a" if equal after rounding, else "a--b"
+        lo, hi = (fmt(key.replace("_range", ""), {"value": x}) for x in v)
+        return lo if lo == hi else f"{lo}\\text{{--}}{hi}"
     last = key.rsplit(".", 1)[-1]
     if last.startswith("alpha"):
         if sem is not None and not math.isnan(sem):

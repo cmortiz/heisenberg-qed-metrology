@@ -208,7 +208,7 @@ def sequential_schedule_depth(eps_tar: float, w0: float = math.pi, c_m: float = 
 def gk(g): return f"g{g:.2f}"
 def sk(s): return f"s{s:.2f}"
 def qk(q): return f"q{q:g}"
-def kk(k): return f"k{k:.3f}"
+def kk(k): return f"k{k:g}"
 
 
 def fnum(x):
@@ -394,6 +394,16 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
         if s > 0:
             nums[f"text.sequential.M2sigma2_{sk(s)}_eps1e-2"] = scalar_entry(
                 m_exec**2 * s**2, src, "M_exec_max^2 * sigma_epsilon^2 at the quoted eps")
+            nums[f"text.sequential.visibility_{sk(s)}_eps1e-2"] = scalar_entry(
+                math.exp(-0.5 * m_exec**2 * s**2), src, "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps")
+    # ranges over L quoted in the main text (value = [min, max] over the L cells)
+    for s in sorted(cc.loc[cc["protocol"] == "sequential", "sigma_epsilon"].unique()):
+        rows = cc[(cc["protocol"] == "sequential") & np.isclose(cc["sigma_epsilon"], s)]
+        tag = "noiseless" if s == 0 else sk(s)
+        nums[f"text.sequential.alpha_full_{tag}"] = range_entry(rows["alpha_full"], rows["source_csv"].iloc[0],
+                                                                f"[min, max] over L of the full-range alpha at sigma = {s:g}", window="full")
+        nums[f"text.sequential.conv_{tag}_range"] = range_entry(rows["converged_pct"], rows["source_csv"].iloc[0],
+                                                                f"[min, max] over L of Converged (%) at sigma = {s:g}")
 
 
 def numbers_realistic(cells: pd.DataFrame, nums: dict) -> None:
@@ -404,10 +414,14 @@ def numbers_realistic(cells: pd.DataFrame, nums: dict) -> None:
         if row["mode"] in ("ed_postselect", "combined_postselect"):
             proto += "_rej"
         Lpart = "" if row["protocol"] == "bare_adaptive" else f"_L{row['L']}"
+        # sequential: majority vote is estimator-agnostic (no estimator suffix); prep enters through F only
+        est = "" if row["protocol"] == "sequential" else f"_{row['estimator']}"
         if row["q"] > 0:
-            key = f"tab_realistic.readout.{proto}{Lpart}_{qk(row['q'])}_{row['estimator']}"
+            key = f"tab_realistic.readout.{proto}{Lpart}_{qk(row['q'])}{est}"
+        elif row["protocol"] == "sequential":
+            key = f"tab_realistic.prep.{proto}{Lpart}_F{row['F']:g}"
         else:
-            key = f"tab_realistic.prep.{proto}{Lpart}_{kk(row['k'])}_{row['estimator']}"
+            key = f"tab_realistic.prep.{proto}{Lpart}_{kk(row['k'])}{est}"
         add_bundle(nums, key, cell_entries(row, "asymptotic"))
         nums[f"{key}.F"] = scalar_entry(row["F"], row["source_csv"], "single-qubit init fidelity of the cell")
     for q in sorted(real.loc[real["q"] > 0, "q"].unique()):
@@ -461,6 +475,41 @@ def numbers_weak_noise(nums: dict) -> None:
             f"gamma_Ham = sqrt(p) omega / sin(omega) at omega = {OMEGA_TRUE}; leading order of p = sin^2(omega) gamma^2/omega^2")
 
 
+def range_entry(values, source_csv, note, window=None) -> dict:
+    vals = [fnum(v) for v in values if fnum(v) is not None]
+    e = scalar_entry(None, source_csv, note, window=window)
+    e["value"] = [min(vals), max(vals)] if vals else None
+    return e
+
+
+def numbers_text_extras(cells: pd.DataFrame, nums: dict) -> None:
+    """Main-text quotes that are functions of several cells: combined ED-FL asymptotic alpha maximum,
+    the block-independence check (cube root of the joint acceptance vs the single-block rate), and the
+    [min, max] window shift over the ED-FL and combined-FL table cells."""
+    cc = clean_cells(cells)
+    comb_fl = cc[(cc["protocol"] == "combined") & (cc["mode"] == "combined_full_likelihood")]
+    if not comb_fl.empty:
+        worst = comb_fl.loc[comb_fl["alpha_asymptotic"].idxmax()]
+        nums["text.combined.alpha_asym_max_edfl"] = scalar_entry(
+            worst["alpha_asymptotic"], worst["source_csv"],
+            f"largest asymptotic alpha over combined ED-FL cells; attained at L={worst['L']} gamma={worst['gamma']} sigma={worst['sigma_epsilon']}",
+            window="asymptotic", sem=worst["sem_asymptotic"], n_seeds=int(worst["n_seeds_asymptotic"]))
+    joint = pick(cc, protocol="combined", mode="combined_postselect", L=1, gamma=0.05, sigma_epsilon=0.01)
+    single = pick(cc, protocol="ed", mode="ed_postselect", L=1, gamma=0.05)
+    if joint is not None and single is not None and fnum(joint["accept_pct"]) and fnum(single["accept_pct"]):
+        per_block = 100.0 * (joint["accept_pct"] / 100.0) ** (1.0 / 3.0)
+        nums["text.combined.per_block_accept_gap_L1_g0.05_s0.01"] = scalar_entry(
+            abs(per_block - single["accept_pct"]), joint["source_csv"],
+            "|cube root of the combined L=1 gamma=0.05 sigma=0.01 joint acceptance - ED L=1 gamma=0.05 acceptance| in points")
+    ed_fl = cc[(cc["protocol"] == "ed") & (cc["mode"] == "ed_full_likelihood")]
+    if not ed_fl.empty:
+        nums["text.fit.window_shift_edfl_range"] = range_entry(ed_fl["shift_full_minus_asym"].abs(), None,
+                                                              "[min, max] of |alpha_full - alpha_asymptotic| over ED-FL table cells")
+    if not comb_fl.empty:
+        nums["text.fit.window_shift_combfl_range"] = range_entry(comb_fl["shift_full_minus_asym"].abs(), None,
+                                                                "[min, max] of |alpha_full - alpha_asymptotic| over combined ED-FL table cells")
+
+
 def numbers_shift(cells: pd.DataFrame, nums: dict) -> None:
     """text.fit.window_shift_max: largest |alpha_full - alpha_asymptotic| over the ED and combined table cells."""
     cc = clean_cells(cells[cells["shift_full_minus_asym"].notna()])
@@ -490,6 +539,7 @@ def build_numbers(cells, hw, fs, df) -> dict:
     numbers_fisher(fs, nums)
     numbers_weak_noise(nums)
     numbers_shift(cells, nums)
+    numbers_text_extras(cells, nums)
     return dict(sorted(nums.items()))
 
 

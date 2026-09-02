@@ -51,7 +51,11 @@ SEQ_GRID = [(1, 0.0), (1, 0.01), (1, 0.05), (2, 0.0), (2, 0.01), (2, 0.05), (3, 
 MARG_CONFIGS = [(1, 0.01, 0.01)]                     # plan table group 4 (run_suite.sh:299-302 lists L in {1,2} at gamma 0.05)
 BARE_ADAPTIVE_GAMMAS = [0.0, 0.01, 0.05, 0.10]
 WINDOW_SIGMAS = [0.05, 0.10]
-WINDOW_EPS = 1e-4   # one period pi/N must stay >> tolerance up to N = 4 N* = 800 (1e-3 was trivially convergent there)
+# hwindow target: eps_tar = 4e-2 sigma^2 = 2e-2 / N*, so the sweep is the same in the scaled variable N/N*
+# (shots needed ~ (N* eps)^-2 at both ends) and one period pi/N stays >= 20 x tolerance up to N = 4 N*.
+# sigma 0.05 -> 1e-4 (N* = 200), sigma 0.10 -> 4e-4 (N* = 50).
+def WINDOW_EPS(sigma: float) -> float:
+    return 4e-2 * sigma**2
 READOUT_QS = [1e-3, 1e-2, 3e-2]
 PREP_KS = [0.99, 0.995, 0.999]
 PREP_F = 0.99
@@ -95,7 +99,7 @@ def suite_configs(quick: bool) -> dict[int, list[RunSpec]]:
     g[4] = ([RunSpec("combined", gamma=x, L=L, sigma=s, inference=inf) for L, x, s in COMB_GRID for inf in ("fl", "ps")]
             + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True) for L, x, s in MARG_CONFIGS])
     g[5] = [RunSpec("sequential", L=L, sigma=s) for L, s in SEQ_GRID]
-    g[6] = [RunSpec("hwindow", sigma=s, eps_tar=WINDOW_EPS) for s in WINDOW_SIGMAS]
+    g[6] = [RunSpec("hwindow", sigma=s, eps_tar=WINDOW_EPS(s)) for s in WINDOW_SIGMAS]
     g[7] = []
     for q in READOUT_QS:
         for est in ESTIMATORS:
@@ -118,7 +122,7 @@ def suite_configs(quick: bool) -> dict[int, list[RunSpec]]:
         g[3] = [RunSpec("ed", gamma=0.05, L=1, inference="fl")]
         g[4] = [RunSpec("combined", gamma=0.05, L=1, sigma=0.01, inference="fl")]
         g[5] = [RunSpec("sequential", L=1, sigma=0.0)]
-        g[6] = [RunSpec("hwindow", sigma=0.05, eps_tar=WINDOW_EPS)]
+        g[6] = [RunSpec("hwindow", sigma=0.05, eps_tar=WINDOW_EPS(0.05))]
         g[7] = [RunSpec("ed", gamma=NOISE_GAMMA, L=1, inference="fl", q=1e-2, estimator="aware")]
         g[8] = [RunSpec("ed", gamma=NOISE_GAMMA, L=1, inference="fl", k=0.99, F=PREP_F, estimator="aware")]
     return g
