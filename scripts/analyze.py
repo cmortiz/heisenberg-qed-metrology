@@ -502,9 +502,28 @@ def numbers_text_extras(cells: pd.DataFrame, nums: dict) -> None:
             abs(per_block - single["accept_pct"]), joint["source_csv"],
             "|cube root of the combined L=1 gamma=0.05 sigma=0.01 joint acceptance - ED L=1 gamma=0.05 acceptance| in points")
     ed_fl = cc[(cc["protocol"] == "ed") & (cc["mode"] == "ed_full_likelihood")]
+    ed_rej = cc[(cc["protocol"] == "ed") & (cc["mode"] == "ed_postselect")]
     if not ed_fl.empty:
         nums["text.fit.window_shift_edfl_range"] = range_entry(ed_fl["shift_full_minus_asym"].abs(), None,
                                                               "[min, max] of |alpha_full - alpha_asymptotic| over ED-FL table cells")
+        nums["text.ed.alpha_asym_edfl_range"] = range_entry(ed_fl["alpha_asymptotic"], ed_fl["source_csv"].iloc[0],
+                                                           "[min, max] asymptotic alpha over the ED-FL table cells", window="asymptotic")
+        nums["text.ed.conv_edfl_min"] = scalar_entry(ed_fl["converged_pct"].min(), ed_fl["source_csv"].iloc[0],
+                                                     "smallest Converged (%) over the ED-FL table cells")
+    if not ed_rej.empty:
+        nums["text.ed.alpha_asym_rej_range"] = range_entry(ed_rej["alpha_asymptotic"], ed_rej["source_csv"].iloc[0],
+                                                          "[min, max] asymptotic alpha over the ED rejection-sampling table cells", window="asymptotic")
+    ed_all = pd.concat([ed_fl, ed_rej])
+    if not ed_all.empty:
+        nums["text.ed.alpha_asym_max_dev"] = scalar_entry((ed_all["alpha_asymptotic"] - 1.0).abs().max(), None,
+                                                          "largest |alpha_asymptotic - 1| over the ED-FL and rejection table cells (the 'within X of the Heisenberg limit' quote)",
+                                                          window="asymptotic")
+    bare_rows = cc[cc["protocol"] == "bare_fixed"]
+    if not bare_rows.empty:
+        nums["text.prefactor.bare_alpha_asym_range"] = range_entry(bare_rows["alpha_asymptotic"], bare_rows["source_csv"].iloc[0],
+                                                                   "[min, max] asymptotic alpha over the bare fixed-N cells", window="asymptotic")
+        nums["text.prefactor.bare_conv_min"] = scalar_entry(bare_rows["converged_pct"].min(), bare_rows["source_csv"].iloc[0],
+                                                            "smallest Converged (%) over the bare fixed-N cells")
     if not comb_fl.empty:
         nums["text.fit.window_shift_combfl_range"] = range_entry(comb_fl["shift_full_minus_asym"].abs(), None,
                                                                 "[min, max] of |alpha_full - alpha_asymptotic| over combined ED-FL table cells")
