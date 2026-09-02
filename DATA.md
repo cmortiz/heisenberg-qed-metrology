@@ -44,6 +44,7 @@ and `min_points` are those of the element's `.alpha` entries; every entry also c
 | Text: Fisher saturation | `text.fisher_saturation.{edfl_L{L}_{g},combined_L{L}_{g}_{s}}.{mean,seed_min}`, `.{edfl,combined}_{min,max}`, `.min` | `ed.csv`, `combined.csv` (FL rows; `sum_F_obs`, `sum_M_sq`) | asymptotic rows ($\varepsilon < 10^{-2}$), per-seed mean | analyze -> `derived/fisher.csv` |
 | Text: weak-noise map $\gamma_{\rm Ham} = \sqrt{p}\,\omega/\sin\omega$ | `text.weak_noise_map.gamma_ham_p{p}` | none (formula at $\omega = 0.3$) | n/a | analyze |
 | Text: fit-window shift (replaces the WLS sentence) | `text.fit.window_shift_max`, `.window_shift_max_{protocol}` | all protocol CSVs | full minus asymptotic per cell | analyze -> `derived/cells.csv` |
+| Text: Heisenberg scaling with logarithmic overhead (seed-mean $T\varepsilon = a + b\ln(1/\varepsilon)$ over all converged targets, against a pure power law on the same averaged data) | per cell `<prefix>.logfit_{a,b,rel_rms}`, `.powfit_rel_rms`; `text.logfit.alpha_implied_{full,asymptotic}` (exponent a power-law fit assigns to $\ln(1/\varepsilon)/\varepsilon$ on the 60-target grid), `text.logfit.{edfl,rej,bare_fixed,combfl}_{rel_rms,pow_rel_rms,b,alpha_asym}_range`, `text.logfit.bare_adaptive_g0_{logfit_a,logfit_b,logfit_rel_rms,powfit_rel_rms}` | all Bayesian CSVs | full range, seed-mean T per target | analyze -> `derived/cells.csv` |
 
 Table bodies are pasted from `tables/*.tex`; `tables/tab_bare_fixed.tex` (every `bare_fixed` cell) is a companion, not a paper table.
 

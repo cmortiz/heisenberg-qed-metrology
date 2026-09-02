@@ -119,6 +119,13 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
    updates; PS every 100 accepted shots; `hwindow` every shot. Rejected rounds are
    charged but never update or check, under either rule.
 
+Numerical guard (finding of the v2 full run): a syndrome probability is clipped to `[1e-30, P_MAX]` with
+`P_MAX = 1 - 1e-7` before `log(1 - p)`. The earlier `1 - 1e-30` is a no-op in float32, and where the prior
+window crosses omega = 0 (ED with N <= 5) `p = sin^2(M Omega) gamma^2 / Omega^2` reaches exactly 1, so the
+w = N term produced `0 * (-inf) = NaN` and a NaN posterior (36 exhausted rows at gamma = 0.10, L <= 2,
+eps <= 1.8e-4; rerun after the fix). Rows without a saturated grid point are bitwise unchanged.
+
+
 ## Suite (`scripts/suite.py --dry-run`)
 
 40 seeds, 60 log-spaced targets $\varepsilon \in [10^{-4}, 10^{-1}]$, $\omega = 0.3$.
@@ -185,6 +192,13 @@ all 60 targets of every seed. Every `numbers.json` entry carries `window`,
 and CI widths come from `numbers.json`; the CSVs supply only the data markers.
 Outputs: `fig1_error_detection`, `fig2_inference_comparison`, `fig3_combined_protocol`,
 `fig4_heisenberg_window`, `fig5_realistic`.
+
+Besides the two power-law windows, `analyze.py` fits the seed-mean cost of every cell as
+`T * eps = a + b ln(1/eps)` (Heisenberg scaling with a logarithmic overhead) and reports the RMS relative
+residual of that model and of a pure power law on the same averaged data (`derived/cells.csv`,
+`text.logfit.*`). On the 60-target grid a pure `ln(1/eps)/eps` law fits as alpha = 1.19 (full range) and
+1.15 (asymptotic); the v2 Bayesian cells sit there, the sequential binary search (geometric schedule) at 1.00.
+
 
 ## Tests
 
