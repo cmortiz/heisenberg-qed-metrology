@@ -100,11 +100,30 @@ def bare_polar(omega, gamma, M):
     return np.hypot(A, B), np.arctan2(-B, A), C
 
 
+def bare_parity_coherent(omega, gamma, M, n):
+    """Coherence part Re[(A - iB)^n] of <X^{(x)n}>: the GHZ off-diagonal term,
+    which flips sign between GHZ+ and GHZ- and is scaled by the preparation
+    visibility V."""
+    A, B, _ = bare_bloch(omega, gamma, M)
+    return ((A - 1j * B) ** n).real
+
+
+def bare_parity_population(omega, gamma, M, n):
+    """Population part [n even] C^n of <X^{(x)n}>: from the Z^{(x)n} component
+    of U^dag X U, identical for GHZ+ and GHZ-, so independent of V."""
+    _, _, C = bare_bloch(omega, gamma, M)
+    return C**n if n % 2 == 0 else 0.0 * np.asarray(C)
+
+
 def bare_parity_prob(omega, gamma, M, n, outcome, q=0.0, V=1.0):
-    """P(outcome | omega) for bare GHZ parity with readout visibility (1-2q)^n
-    and preparation visibility V multiplying the coherent term.  outcome 0 -> +."""
+    """P(outcome | omega) for bare GHZ parity.  Readout flips scale the whole
+    parity expectation by (1-2q)^n; the preparation visibility V scales only
+    the coherent term (the even-n population term C^n survives dephasing;
+    finding from tests/test_closed_forms_pennylane.py, 2026-09-02).
+    outcome 0 -> +."""
     sign = 1.0 if outcome == 0 else -1.0
-    return 0.5 * (1.0 + sign * readout_visibility(q, n) * V * bare_parity(omega, gamma, M, n))
+    x_n = V * bare_parity_coherent(omega, gamma, M, n) + bare_parity_population(omega, gamma, M, n)
+    return 0.5 * (1.0 + sign * readout_visibility(q, n) * x_n)
 
 
 # --------------------------------------------------------------------------

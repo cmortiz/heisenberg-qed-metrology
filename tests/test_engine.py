@@ -1,0 +1,320 @@
+"""Engine loop tests against the interface fixed in the plan ('Engine contract',
+'Protocol adapter').  A toy protocol with a fully controlled posterior drives
+``run_epsilon``; nothing here depends on a physics kernel.
+
+Skips until ``eqsp.engine`` exists.
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import pytest
+
+engine = pytest.importorskip("eqsp.engine")
+jnp = pytest.importorskip("jax.numpy")
+
+from eqsp.config import EngineConfig  # noqa: E402
+
+OMEGA = 0.3
+
+
+def _logsumexp64(x):
+    x = np.asarray(x, dtype=np.float64)
+    m = x.max()
+    return m + math.log(np.exp(x - m).sum())
+
+
+def _ctr(res):
+    """Counters object from an EpsResult, whichever attribute carries it."""
+    for name in ("ctr", "counters", "counter"):
+        if hasattr(res, name):
+            return getattr(res, name)
+    return res
+
+
+# --------------------------------------------------------------------------
+# grid, posterior primitives
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("m", [4, 10])
+def test_init_log_posterior_is_float32_uniform_normalised(m):
+    logpk = engine.init_log_posterior(m)
+    assert logpk.dtype == jnp.float32
+    assert logpk.shape == (2**m,)
+    assert abs(_logsumexp64(np.asarray(logpk))) < 1e-5
+    assert np.allclose(np.asarray(logpk), -m * math.log(2.0), atol=1e-6)
+
+
+def test_log_update_normalises_and_keeps_float32():
+    m = 8
+    logpk = engine.init_log_posterior(m)
+    rng = np.random.default_rng(0)
+    log_lik = jnp.asarray(rng.normal(size=2**m).astype(np.float32))
+    out = engine.log_update(logpk, log_lik)
+    assert out.dtype == jnp.float32
+    assert abs(_logsumexp64(np.asarray(out))) < 1e-5
+    ref = np.asarray(logpk, np.float64) + np.asarray(log_lik, np.float64)
+    ref = ref - _logsumexp64(ref)
+    assert np.max(np.abs(np.asarray(out, np.float64) - ref)) < 1e-4
+    # a second update composes
+    out2 = engine.log_update(out, log_lik)
+    ref2 = ref + np.asarray(log_lik, np.float64)
+    ref2 = ref2 - _logsumexp64(ref2)
+    assert np.max(np.abs(np.asarray(out2, np.float64) - ref2)) < 1e-4
+
+
+@pytest.mark.parametrize("builder", ["jax32", "np64"])
+@pytest.mark.parametrize("period", [math.pi, 2 * math.pi])
+def test_make_grid_is_float32_half_open_period(builder, period):
+    m = 12
+    xs = engine.make_grid(m, period, builder)
+    xs_np = np.asarray(xs)
+    assert xs_np.dtype == np.float32
+    assert xs_np.shape == (2**m,)
+    assert xs_np[0] == 0.0
+    assert xs_np[-1] < period
+    # spacing period / 2^m to float32 rounding
+    assert abs(float(xs_np[1]) - period / 2**m) < 1e-6 * period
+    # builders: jax32 = jnp.linspace(float32) (legacy sim:143); np64 = float64 linspace then cast (bh:156-158)
+    if builder == "np64":
+        ref = np.linspace(0, period, 2**m, endpoint=False, dtype=np.float64).astype(np.float32)
+        assert np.array_equal(xs_np, ref)
+    else:
+        ref = np.asarray(jnp.linspace(0, period, 2**m, endpoint=False, dtype=jnp.float32))
+        assert np.array_equal(xs_np, ref)
+
+
+# --------------------------------------------------------------------------
+# map_error: period handling
+# --------------------------------------------------------------------------
+def _delta_logpk(n, idx, weight=None):
+    """Log-posterior concentrated on grid index/indices ``idx``."""
+    p = np.full(n, 1e-30, dtype=np.float64)
+    idx = np.atleast_1d(idx)
+    w = np.ones(len(idx)) if weight is None else np.asarray(weight, float)
+    p[idx] = w / w.sum()
+    p /= p.sum()
+    return jnp.asarray(np.log(p).astype(np.float32))
+
+
+def test_map_error_bimodal_pi_periodic_posterior():
+    """At gamma = 0 the bare likelihood is pi-periodic: on a [0, 2pi) grid the
+    posterior is exactly bimodal (omega and omega + pi) and the MAP error is pi;
+    on the [0, pi) grid it is unimodal and the error is at the grid resolution."""
+    m = 12
+    n = 2**m
+    xs2 = engine.make_grid(m, 2 * math.pi, "np64")
+    i1 = int(round(OMEGA / (2 * math.pi) * n))
+    i2 = int(round((OMEGA + math.pi) / (2 * math.pi) * n))
+    logpk = _delta_logpk(n, [i1, i2])
+    err = float(engine.map_error(logpk, xs2, OMEGA, 2 * math.pi))
+    # argmax picks one of the two equal peaks; circular distance is either ~0 or ~pi.
+    # Break the tie towards the wrong peak to show the failure mode is real:
+    logpk_wrong = _delta_logpk(n, [i1, i2], weight=[1.0, 1.0 + 1e-3])
+    err_wrong = float(engine.map_error(logpk_wrong, xs2, OMEGA, 2 * math.pi))
+    assert abs(err_wrong - math.pi) < 2 * math.pi / n + 1e-6
+    assert min(abs(err), abs(err - math.pi)) < 2 * math.pi / n + 1e-6
+    xs1 = engine.make_grid(m, math.pi, "jax32")
+    j1 = int(round(OMEGA / math.pi * n))
+    err1 = float(engine.map_error(_delta_logpk(n, j1), xs1, OMEGA, math.pi))
+    assert err1 < math.pi / n + 1e-6
+
+
+@pytest.mark.parametrize("period", [math.pi, 2 * math.pi])
+def test_map_error_is_circular_distance(period):
+    m = 10
+    n = 2**m
+    xs = engine.make_grid(m, period, "np64")
+    # peak just below the wrap, truth just above zero: distance wraps through the period
+    k = n - 2
+    truth = 3 * period / n
+    err = float(engine.map_error(_delta_logpk(n, k), xs, truth, period))
+    assert abs(err - 5 * period / n) < 1e-5
+    # peak at the truth's grid point
+    k2 = 17
+    err2 = float(engine.map_error(_delta_logpk(n, k2), xs, float(np.asarray(xs)[k2]), period))
+    assert err2 < 1e-6
+    # error never exceeds period/2
+    err3 = float(engine.map_error(_delta_logpk(n, 0), xs, period / 2, period))
+    assert abs(err3 - period / 2) < 1e-5
+
+
+# --------------------------------------------------------------------------
+# Toy protocol for run_epsilon
+# --------------------------------------------------------------------------
+class ToyProtocol:
+    """Adapter with a scripted posterior.  ``script[i]`` is either None (reject)
+    or a grid index at which the posterior is concentrated after round i; the
+    default is the truth index (converged at the first check)."""
+
+    period = 2 * math.pi
+    grid_builder = "np64"
+    family = "ham"
+    omega_true = OMEGA
+
+    def __init__(self, cfg, m, script=None, flat=False):
+        self.cfg = cfg
+        self.m = m
+        self.xs = engine.make_grid(m, self.period, self.grid_builder)
+        self.n = 2**m
+        self.i_true = int(round(OMEGA / self.period * self.n))
+        self.script = script or {}
+        self.flat = flat
+        self.check_calls = []
+        self.apply_calls = []
+        self.account_calls = []
+        self.dtypes_seen = set()
+
+    def grid_m(self, eps_min):
+        return self.m
+
+    def begin_run(self, seed, m):
+        self.seed = seed
+
+    def begin_epsilon(self, eps, rng):
+        self.eps = eps
+        self.rng = rng
+        self.draws = {"u": rng.random(4)}
+
+    def draw(self, i):
+        rejected = (i in self.script) and self.script[i] is None
+        return engine.Shot(cost=7, rejected=rejected, outcome=0, key=1, aux={"i": i})
+
+    def apply(self, logpk, shot):
+        self.dtypes_seen.add(str(np.asarray(logpk).dtype))
+        self.apply_calls.append(shot.aux["i"])
+        if self.flat:
+            return engine.log_update(logpk, jnp.zeros_like(logpk))
+        idx = self.script.get(shot.aux["i"], self.i_true)
+        return _delta_logpk(self.n, idx)
+
+    def account(self, shot, ctr):
+        self.account_calls.append(shot.aux["i"])
+
+    def check_due(self, i, ctr):
+        self.check_calls.append(i)
+        f = self.cfg.check_every
+        if self.cfg.check_counter == "round0":
+            return i % f == 0
+        if self.cfg.check_counter == "round1":
+            return (i + 1) % f == 0
+        return ctr.n_updates % f == 0
+
+    def row(self, ctr, converged, error):
+        return {"converged": converged, "final_error": error}
+
+
+def _cfg(**kw):
+    base = dict(max_experiments=20, check_every=1, check_counter="round0", tolerance=1.2, track_best_error=False)
+    base.update(kw)
+    return EngineConfig(**base)
+
+
+def _run(p, eps=1e-2, seed=0):
+    p.begin_run(seed, p.m)
+    return engine.run_epsilon(p, eps, np.random.default_rng(seed))
+
+
+def test_run_epsilon_converges_at_first_check_and_posterior_is_float32():
+    p = ToyProtocol(_cfg(), m=12)
+    res = _run(p)
+    assert res.converged is True or res.converged == 1
+    assert float(res.error) < 1.2 * 1e-2
+    ctr = _ctr(res)
+    assert ctr.n_rounds == 1 and ctr.n_updates == 1 and ctr.resources == 7
+    assert p.dtypes_seen == {"float32"}
+
+
+def test_rejected_shots_charge_cost_but_neither_update_nor_check():
+    script = {0: None, 1: None, 2: None}          # three rejected rounds first
+    p = ToyProtocol(_cfg(check_counter="update"), m=12, script=script)
+    res = _run(p)
+    ctr = _ctr(res)
+    assert ctr.n_rejected == 3
+    assert ctr.resources == 7 * 4                 # cost charged on rejected rounds (ed:224)
+    assert ctr.n_updates == 1 and ctr.n_accepted == 1
+    assert p.apply_calls == [3] and p.account_calls == [3]
+    assert all(i >= 3 for i in p.check_calls)     # no check during rejected rounds
+    assert res.converged
+
+
+def test_exhausting_max_experiments_is_never_converged():
+    p = ToyProtocol(_cfg(max_experiments=6), m=12, flat=True)
+    res = _run(p, eps=1e-9)                       # tolerance 1.2e-9 rad: no check can pass
+    ctr = _ctr(res)
+    # legacy checks on the last round too (sim:196, bh:192); falling through is never converged
+    assert not res.converged
+    assert ctr.n_rounds == 6 and ctr.n_updates == 6
+    # with a flat posterior the MAP sits at grid index 0 -> error = omega_true
+    assert abs(float(res.error) - OMEGA) < 1e-5
+
+
+def test_all_rejected_never_converged_and_no_update():
+    p = ToyProtocol(_cfg(max_experiments=5), m=10, script={i: None for i in range(5)})
+    res = _run(p)
+    ctr = _ctr(res)
+    assert not res.converged
+    assert ctr.n_rejected == 5 and ctr.n_updates == 0 and ctr.resources == 35
+
+
+@pytest.mark.parametrize("track_best", [True, False])
+def test_track_best_error_semantics(track_best):
+    """Posterior peaks at the truth in round 0 (error at grid resolution, but the
+    tolerance is tiny so it does not converge), then jumps far away and stays.
+    best-error mode reports the round-0 error; final mode reports the last."""
+    m = 12
+    n = 2**m
+    i_true = int(round(OMEGA / (2 * math.pi) * n))
+    far = (i_true + n // 4) % n
+    script = {i: far for i in range(1, 6)}
+    p = ToyProtocol(_cfg(max_experiments=6, track_best_error=track_best), m=m, script=script)
+    res = _run(p, eps=1e-9)
+    assert not res.converged
+    err = float(res.error)
+    if track_best:
+        assert err < 2 * math.pi / n + 1e-6
+    else:
+        assert abs(err - math.pi / 2) < 2 * math.pi / n + 1e-5
+
+
+@pytest.mark.parametrize("counter,expected_rounds", [("round0", 1), ("round1", 3), ("update", 4)])
+def test_check_cadence_counters(counter, expected_rounds):
+    """check_every = 3; one rejected round at i = 0.
+    round0: i % 3 == 0 -> checks at i = 0, but that round is rejected, so the
+            first check is i = 3 ... unless a converged posterior exists earlier;
+            with the reject at i = 0 the first eligible check is i = 3 (4 rounds).
+    Use no reject for round0 to keep the plan's semantics visible."""
+    if counter == "round0":
+        p = ToyProtocol(_cfg(check_every=3, check_counter="round0"), m=10)
+    elif counter == "round1":
+        p = ToyProtocol(_cfg(check_every=3, check_counter="round1"), m=10)
+    else:
+        # update counter: reject i = 0, updates at i = 1, 2, 3 -> third update at i = 3
+        p = ToyProtocol(_cfg(check_every=3, check_counter="update"), m=10, script={0: None})
+    res = _run(p)
+    assert res.converged
+    assert _ctr(res).n_rounds == expected_rounds
+
+
+def test_last_round_is_always_checked():
+    """i == max_experiments - 1 forces a check even off-cadence; the posterior
+    is converged from round 0, so the result converges only at that last round."""
+    p = ToyProtocol(_cfg(max_experiments=5, check_every=100, check_counter="round1"), m=10)
+    res = _run(p)
+    assert res.converged
+    assert _ctr(res).n_rounds == 5
+
+
+def test_tolerance_is_strict_multiple_of_eps():
+    """Converged iff error < tolerance * eps.  Put the peak two grid points off
+    the truth and pick eps so the error straddles the threshold."""
+    m = 12
+    n = 2**m
+    xs = np.asarray(engine.make_grid(m, 2 * math.pi, "np64"))
+    i_true = int(round(OMEGA / (2 * math.pi) * n))
+    idx = i_true + 2
+    err = abs(float(xs[idx]) - OMEGA)
+    for eps, expect in [(err / 1.2 * 1.01, True), (err / 1.2 * 0.99, False)]:
+        p = ToyProtocol(_cfg(max_experiments=3), m=m, script={i: idx for i in range(3)})
+        res = _run(p, eps=eps)
+        assert bool(res.converged) is expect, (eps, err, float(res.error))
