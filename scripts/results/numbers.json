@@ -7320,6 +7320,52 @@
   "n_rows": null,
   "note": "min over combined cells of C_rejection / C_EDFL"
  },
+ "text.ed.alpha_asym_edfl_range": {
+  "value": [
+   0.9783023119224034,
+   1.1384030996851917
+  ],
+  "sem": null,
+  "window": "asymptotic",
+  "min_points": null,
+  "source_csv": "ed_full_likelihood.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] asymptotic alpha over the ED-FL table cells"
+ },
+ "text.ed.alpha_asym_max_dev": {
+  "value": 0.4835565282202682,
+  "sem": null,
+  "window": "asymptotic",
+  "min_points": null,
+  "source_csv": null,
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "largest |alpha_asymptotic - 1| over bare fixed-N, ED-FL and rejection table cells (the 'within X of the Heisenberg limit' quote)"
+ },
+ "text.ed.alpha_asym_rej_range": {
+  "value": [
+   0.9121932998396179,
+   1.120514210232705
+  ],
+  "sem": null,
+  "window": "asymptotic",
+  "min_points": null,
+  "source_csv": "ed_postselect.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] asymptotic alpha over the ED rejection-sampling table cells"
+ },
+ "text.ed.conv_edfl_min": {
+  "value": 99.70833333333333,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "ed_full_likelihood.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "smallest Converged (%) over the ED-FL table cells"
+ },
  "text.fisher_saturation.combined_L1_g0.01_s0.01.mean": {
   "value": 0.9984654972470928,
   "sem": 8.445753765967844e-05,
