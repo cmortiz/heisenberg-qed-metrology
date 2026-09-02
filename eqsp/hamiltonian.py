@@ -5,7 +5,7 @@ Two families:
 * Legacy-verbatim theorem-model kernels (Theorem thm:bitflip closed forms), lifted
   from simulation_bare_hamiltonian.py (bh), simulation_error_detected.py (ed) and
   simulation_combined.py (cb) after the closed-form check in
-  reports/check_kernels.py.  Bodies are unchanged (only the function names
+  checks/check_kernels.py.  Bodies are unchanged (only the function names
   differ) so XLA fusion and float32 rounding match the committed CSVs
   (plan, legacy convention 19).
 
@@ -161,7 +161,7 @@ def p_grid_homogeneous(omega_grid, gamma, M_evol):
 def p_grid_homogeneous_exact(omega_grid, gamma, M_evol):
     """p_k(omega) on the grid without the float32 cancellation of the legacy
     form (1 - omega^2/Omega^2 loses up to 2% of p where p < 1e-7; finding of
-    reports/check_kernels.py B4x).  Used by the exact model; the theorem model
+    checks/check_kernels.py B4x).  Used by the exact model; the theorem model
     keeps p_grid_homogeneous for the bitwise regression."""
     Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
     M_Omega = M_evol * Omega
@@ -374,7 +374,7 @@ def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcom
     The angle n theta_j is computed mod 2pi in 48-bit fixed point (three 16-bit
     limbs, n <= 2^14, all products < 2^31 exact).  At gamma = 0 the angle
     expression equals the legacy integer-mod angle sim:68-69 bitwise (checked in
-    reports/check_kernels.py).  log_ro = n log(1-2q) scales the whole parity
+    checks/check_kernels.py).  log_ro = n log(1-2q) scales the whole parity
     (readout flips); log_V = log(k^(n-1) F) scales only the coherent term (a
     dephased GHZ keeps the even-n population term C^n); both 0 for the
     mismatched estimator."""
