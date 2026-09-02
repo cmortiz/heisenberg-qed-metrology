@@ -409,6 +409,8 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
         tag = "noiseless" if s == 0 else sk(s)
         nums[f"text.sequential.alpha_full_{tag}"] = range_entry(rows["alpha_full"], rows["source_csv"].iloc[0],
                                                                 f"[min, max] over L of the full-range alpha at sigma = {s:g}", window="full")
+        nums[f"text.sequential.alpha_asym_{tag}_range"] = range_entry(rows["alpha_asymptotic"], rows["source_csv"].iloc[0],
+                                                                f"[min, max] over L of the asymptotic-window alpha at sigma = {s:g}", window="full")
         nums[f"text.sequential.conv_{tag}_range"] = range_entry(rows["converged_pct"], rows["source_csv"].iloc[0],
                                                                 f"[min, max] over L of Converged (%) at sigma = {s:g}")
 
