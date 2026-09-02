@@ -187,6 +187,28 @@ def check_due(cfg: EngineConfig, i: int, ctr: Counters) -> bool:
 # --------------------------------------------------------------------------
 # The loop
 # --------------------------------------------------------------------------
+def _run_epsilon_device(p, logpk, ctr: Counters, omega, threshold: float, stop_std: float) -> EpsResult:
+    """Posterior-rule loop for protocols that expose ``run_chunk``: the update + stopping test runs
+    in a device-side while_loop over chunks of ``p.chunk`` pre-drawn shots (one host sync per chunk
+    instead of per update).  Same semantics as the host loop: stop at the first update with
+    2 std <= eps, converged iff the MAP error there is < threshold; exhausting the budget is never
+    converged."""
+    cfg = p.cfg
+    i = 0
+    err = std = math.nan
+    while i < cfg.max_experiments:
+        B = min(p.chunk, cfg.max_experiments - i)
+        logpk, n_done, e, s = p.run_chunk(logpk, i, B, omega, stop_std)
+        n_done, err, std = int(n_done), float(e), float(s)
+        i += n_done
+        p.account_chunk(ctr, n_done)
+        ctr.posterior_std = std
+        if std <= stop_std:
+            conv = err < threshold
+            return EpsResult(conv, err, ctr, p.row(ctr, conv, err))
+    return EpsResult(False, err, ctr, p.row(ctr, False, err))
+
+
 def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> EpsResult:
     cfg = p.cfg
     p.begin_epsilon(eps, rng)
@@ -198,6 +220,8 @@ def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> Ep
     err = math.nan
     posterior_mode = cfg.stop == "posterior"
     stop_std = 0.5 * eps                          # 95% credible half-width (2 std) <= eps
+    if posterior_mode and hasattr(p, "run_chunk"):
+        return _run_epsilon_device(p, logpk, ctr, omega, threshold, stop_std)
     for i in range(cfg.max_experiments):
         shot = p.draw(i)
         ctr.resources += shot.cost

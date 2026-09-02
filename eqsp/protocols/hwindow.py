@@ -13,16 +13,40 @@ from __future__ import annotations
 
 import math
 
+from functools import partial
+
+import jax
 import jax.numpy as jnp
 import numpy as np
+from jax import lax
 
 from .. import closed_forms as cf
 from .. import hamiltonian as H
 from ..config import OMEGA_TRUE, EngineConfig, RunSpec, window_N_grid  # noqa: F401 (re-exported)
-from ..engine import Shot, check_due, make_grid
+from ..engine import Shot, check_due, make_grid, posterior_stats
 from ..io import stream_rng
 
 GRID_M = 16
+CHUNK = 2048      # updates per device-side while_loop call (one host sync per chunk)
+
+
+@partial(jax.jit, static_argnames=("N", "period", "chunk"))
+def run_chunk_kernel(logpk, xs, N, log_lambda, thetas, outcomes, i0, omega_true, period, stop_std, chunk):
+    """Up to ``chunk`` hwindow updates on device starting at shot i0, stopping at the first
+    update whose posterior circular std <= stop_std.  Same hwindow_update and
+    posterior_stats as the host loop; returns (logpk, n_done, err, std)."""
+    def cond(state):
+        _, n, _, std = state
+        return (n < chunk) & (std > stop_std)
+
+    def body(state):
+        logpk, n, _, _ = state
+        logpk = H.hwindow_update(logpk, xs, N, log_lambda, thetas[i0 + n], outcomes[i0 + n])
+        err, std = posterior_stats(logpk, xs, omega_true, period=period)
+        return logpk, n + 1, err, std
+
+    init = (logpk, jnp.int32(0), jnp.float32(jnp.inf), jnp.float32(jnp.inf))
+    return lax.while_loop(cond, body, init)
 
 
 class HWindow:
@@ -79,6 +103,8 @@ class HWindow:
             outcomes = outcomes ^ (u_r < H.parity_flip_prob(spec.q, N)).astype(int)
         self.thetas = thetas
         self.outcomes = outcomes
+        self.thetas_jax = jnp.asarray(thetas, dtype=jnp.float32)
+        self.outcomes_jax = jnp.asarray(outcomes, dtype=jnp.int32)
 
     def draw(self, i: int) -> Shot:
         return Shot(cost=self.N, rejected=False, outcome=int(self.outcomes[i]), key=1,
@@ -90,6 +116,21 @@ class HWindow:
 
     def account(self, shot: Shot, ctr) -> None:
         ctr.sum_M_sq += 1.0
+
+    # --- device-side chunked loop (engine uses it when present and stop == "posterior") ---
+    chunk = CHUNK
+
+    def run_chunk(self, logpk, i0: int, B: int, omega_true, stop_std: float):
+        return run_chunk_kernel(logpk, self.xs, self.N, jnp.float32(self.log_lambda), self.thetas_jax,
+                                self.outcomes_jax, jnp.int32(i0), omega_true, self.period, jnp.float32(stop_std), B)
+
+    def account_chunk(self, ctr, n_done: int) -> None:
+        ctr.resources += self.N * n_done
+        ctr.n_rounds += n_done
+        ctr.n_updates += n_done
+        ctr.n_accepted += n_done
+        ctr.sum_M_sq += float(n_done)
+        ctr.M_exec_max = max(ctr.M_exec_max, 1)
 
     def check_due(self, i: int, ctr) -> bool:
         return check_due(self.cfg, i, ctr)
