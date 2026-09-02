@@ -172,3 +172,40 @@ def prefactor(cell: pd.DataFrame) -> Prefactor:
 def converged_pct(cell: pd.DataFrame) -> float:
     """Converged (%) over all rows of the cell (all targets, all seeds)."""
     return 100.0 * float(coerce_converged(cell["converged"]).mean())
+
+
+@dataclass
+class LogFit:
+    """Seed-mean T*eps against ln(1/eps) over all converged rows (full range):
+    linear model T*eps = a + b ln(1/eps) (Heisenberg with logarithmic overhead) versus a pure power law
+    ln(T*eps) = c + (alpha - 1) ln(1/eps); rel_rms_* is the RMS of (data/model - 1)."""
+    a: float
+    b: float
+    rel_rms_lin: float
+    rel_rms_pow: float
+    alpha_pow: float
+    n_eps: int
+
+
+def logfit(cell: pd.DataFrame) -> LogFit:
+    sub = cell[coerce_converged(cell["converged"])]
+    if sub["epsilon"].nunique() < 10:
+        return LogFit(np.nan, np.nan, np.nan, np.nan, np.nan, int(sub["epsilon"].nunique()))
+    m = sub.groupby("epsilon")["total_resources"].mean()
+    eps = m.index.to_numpy(float)
+    y = m.to_numpy(float) * eps
+    x = np.log(1.0 / eps)
+    b, a = np.polyfit(x, y, 1)
+    lin = a + b * x
+    s_, c = np.polyfit(x, np.log(y), 1)
+    pw = np.exp(c + s_ * x)
+    return LogFit(float(a), float(b), float(np.sqrt(np.mean((y / lin - 1.0) ** 2))),
+                  float(np.sqrt(np.mean((y / pw - 1.0) ** 2))), float(1.0 + s_), int(len(eps)))
+
+
+def alpha_implied_by_log_law(eps: np.ndarray, window: str) -> float:
+    """Exponent a power-law fit assigns to the pure law T = ln(1/eps)/eps on the given target grid and window."""
+    eps_max, _ = WINDOWS[window]
+    e = np.asarray(eps, float)
+    e = e[e < eps_max]
+    return fit_seed(e, np.log(1.0 / e) / e)[0]

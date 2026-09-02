@@ -41,6 +41,8 @@ from jax.scipy.special import logsumexp
 from . import closed_forms as cf
 
 LIK_FLOOR = 1e-30      # sim:71, bh:121, ed:75, ed:89, cb:77, cb:95, cb:118
+P_MAX = 1.0 - 1e-7     # upper clip of a syndrome probability: 1 - 1e-30 == 1 in float32, so p = 1 (reached where the
+                       # prior window crosses omega = 0 and sin^2(M Omega) = 1) gave log(1 - p) = -inf and 0 * -inf = NaN
 HIGHEST = jax.lax.Precision.HIGHEST
 
 
@@ -186,7 +188,7 @@ def phase_update(logpk, phi_eff_grid, outcome):
 @jit
 def syndrome_update_homogeneous(logpk, p_k_grid, d, N_code):
     """log P(d | omega, M) = d log p + (N-d) log(1-p) + const (ed:81-93, verbatim)."""
-    p_safe = jnp.clip(p_k_grid, 1e-30, 1.0 - 1e-30)
+    p_safe = jnp.clip(p_k_grid, 1e-30, P_MAX)
     log_lik = d * jnp.log(p_safe) + (N_code - d) * jnp.log(1.0 - p_safe)
     logpk = logpk + log_lik
     logpk = logpk - logsumexp(logpk)
@@ -270,7 +272,7 @@ def p_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
 @jit
 def syndrome_update_per_qubit(logpk, p_k_per_qubit_grid, error_mask):
     """Per-qubit Bernoulli syndrome factor (cb:111-123, verbatim)."""
-    p_safe = jnp.clip(p_k_per_qubit_grid, 1e-30, 1.0 - 1e-30)
+    p_safe = jnp.clip(p_k_per_qubit_grid, 1e-30, P_MAX)
     log_lik = error_mask[None, :] * jnp.log(p_safe) + (1.0 - error_mask[None, :]) * jnp.log(1.0 - p_safe)
     log_lik_sum = jnp.sum(log_lik, axis=1)
     logpk = logpk + log_lik_sum
@@ -337,7 +339,7 @@ def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome, theta=0.0):
     """
     N = logc.shape[0] - 1
     w = jnp.arange(N + 1, dtype=jnp.float32)
-    p_safe = jnp.clip(p_grid, 1e-30, 1.0 - 1e-30)
+    p_safe = jnp.clip(p_grid, 1e-30, P_MAX)
     lp = jnp.log(p_safe)[:, None]
     l1p = jnp.log(1.0 - p_safe)[:, None]
     la = w[None, :] * lp + (N - w)[None, :] * l1p + logc[None, :]        # (G, N+1)
@@ -360,7 +362,7 @@ def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, ou
        0 otherwise).  log_vis = log of the inference visibility.
     """
     B, P, Nc = X.shape
-    p_safe = jnp.clip(p_grid, 1e-30, 1.0 - 1e-30)
+    p_safe = jnp.clip(p_grid, 1e-30, P_MAX)
     lp = jnp.log(p_safe)
     l1p = jnp.log(1.0 - p_safe)
     shift = 0.0

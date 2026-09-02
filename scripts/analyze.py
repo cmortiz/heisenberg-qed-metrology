@@ -130,6 +130,7 @@ def analyze_cells(df: pd.DataFrame) -> pd.DataFrame:
     for keys, cell in df[df["protocol"] != "hwindow"].groupby(GROUP_KEYS, sort=True):
         fits = fit.fit_both_windows(cell)
         pf = fit.prefactor(cell)
+        lf = fit.logfit(cell)
         row = dict(zip(GROUP_KEYS, keys))
         row.update({
             "source_csv": cell["source_csv"].iloc[0],
@@ -138,6 +139,8 @@ def analyze_cells(df: pd.DataFrame) -> pd.DataFrame:
             "converged_pct": fit.converged_pct(cell),
             "shift_full_minus_asym": fit.window_shift(fits),
             "C": pf.C, "sem_logC": pf.sem_logC, "n_rows_C": pf.n_rows,
+            "logfit_a": lf.a, "logfit_b": lf.b, "logfit_rel_rms": lf.rel_rms_lin, "powfit_rel_rms": lf.rel_rms_pow,
+            "powfit_alpha": lf.alpha_pow,
             "accept_pct": 100.0 * float(cell["acceptance_rate"].mean()) if cell["acceptance_rate"].notna().any() else np.nan,
         })
         for w, f in fits.items():
@@ -241,6 +244,10 @@ def cell_entries(row: pd.Series, window: str) -> dict:
                                       n_rows=int(row["n_rows"])),
         "C": scalar_entry(row["C"], row["source_csv"], "geometric mean of T*eps over converged rows (full range); sem is of log C",
                           window="full", sem=row["sem_logC"], n_rows=int(row["n_rows_C"])),
+        "logfit_b": scalar_entry(row["logfit_b"], row["source_csv"], "slope b of seed-mean T*eps = a + b ln(1/eps) over all converged targets"),
+        "logfit_a": scalar_entry(row["logfit_a"], row["source_csv"], "intercept a of seed-mean T*eps = a + b ln(1/eps)"),
+        "logfit_rel_rms": scalar_entry(row["logfit_rel_rms"], row["source_csv"], "RMS relative residual of the a + b ln(1/eps) model (fraction)"),
+        "powfit_rel_rms": scalar_entry(row["powfit_rel_rms"], row["source_csv"], "RMS relative residual of a pure power law on the same seed-mean T*eps (fraction)"),
     }
 
 
@@ -482,6 +489,38 @@ def range_entry(values, source_csv, note, window=None) -> dict:
     return e
 
 
+def numbers_logfit(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> None:
+    """Heisenberg-with-log-overhead keys: implied exponents of a pure eps^-1 ln(1/eps) law on the target grid,
+    and residual ranges of the linear-in-ln(1/eps) model versus a power law for the headline cells."""
+    eps = np.sort(df.loc[df["protocol"] != "hwindow", "epsilon"].unique())
+    if len(eps) >= 10:
+        for w in ("full", "asymptotic"):
+            nums[f"text.logfit.alpha_implied_{w}"] = scalar_entry(
+                fit.alpha_implied_by_log_law(eps, w), None,
+                f"alpha a per-seed power-law fit assigns to T = ln(1/eps)/eps on the {len(eps)}-target grid ({w} window)", window=w)
+    cc = clean_cells(cells)
+    groups = {
+        "edfl": cc[(cc["protocol"] == "ed") & (cc["mode"] == "ed_full_likelihood")],
+        "rej": cc[(cc["protocol"] == "ed") & (cc["mode"] == "ed_postselect")],
+        "bare_fixed": cc[cc["protocol"] == "bare_fixed"],
+        "combfl": cc[(cc["protocol"] == "combined") & (cc["mode"] == "combined_full_likelihood")],
+    }
+    for name, g in groups.items():
+        g = g[g["logfit_b"].notna()]
+        if g.empty:
+            continue
+        src = ", ".join(sorted(g["source_csv"].unique()))
+        nums[f"text.logfit.{name}_rel_rms_range"] = range_entry(g["logfit_rel_rms"], src, f"[min, max] RMS relative residual of T*eps = a + b ln(1/eps) over {name} cells")
+        nums[f"text.logfit.{name}_pow_rel_rms_range"] = range_entry(g["powfit_rel_rms"], src, f"[min, max] RMS relative residual of a pure power law over {name} cells")
+        nums[f"text.logfit.{name}_b_range"] = range_entry(g["logfit_b"], src, f"[min, max] slope b over {name} cells")
+        nums[f"text.logfit.{name}_alpha_asym_range"] = range_entry(g["alpha_asymptotic"], src, f"[min, max] asymptotic alpha over {name} cells")
+    ba = cc[(cc["protocol"] == "bare_adaptive") & np.isclose(cc["gamma"], 0.0)]
+    if len(ba) == 1:
+        r = ba.iloc[0]
+        for k in ("logfit_a", "logfit_b", "logfit_rel_rms", "powfit_rel_rms"):
+            nums[f"text.logfit.bare_adaptive_g0_{k}"] = scalar_entry(r[k], r["source_csv"], f"{k} of the noiseless adaptive bare probe")
+
+
 def numbers_text_extras(cells: pd.DataFrame, nums: dict) -> None:
     """Main-text quotes that are functions of several cells: combined ED-FL asymptotic alpha maximum,
     the block-independence check (cube root of the joint acceptance vs the single-block rate), and the
@@ -559,6 +598,7 @@ def build_numbers(cells, hw, fs, df) -> dict:
     numbers_weak_noise(nums)
     numbers_shift(cells, nums)
     numbers_text_extras(cells, nums)
+    numbers_logfit(cells, df, nums)
     return dict(sorted(nums.items()))
 
 

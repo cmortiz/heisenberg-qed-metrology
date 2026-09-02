@@ -416,3 +416,21 @@ def test_fixed_N_complex_kernel_matches_closed_form_sign():
         for theta in (0.7, 2.9):
             assert np.allclose(Z[0] * np.cos(theta) + Z[1] * np.sin(theta),
                                cf.bare_parity_coherent(om.astype(float), gamma, M, N, theta), atol=1e-4)
+
+
+def test_exact_ed_update_finite_when_syndrome_probability_saturates():
+    """p = 1 exactly (grid crossing omega = 0 at sin^2(M Omega) = 1) must not produce a NaN posterior
+    (v2_full2 finding: ED gamma = 0.10, L <= 2, 36 exhausted rows with error = half window)."""
+    import jax.numpy as jnp
+    from eqsp import hamiltonian as H
+    G, N = 64, 3
+    p_grid = jnp.linspace(0.0, 1.0, G, dtype=jnp.float32)          # includes exact 0 and exact 1
+    phi_grid = jnp.linspace(0.0, 1.0, G, dtype=jnp.float32)
+    logpk = jnp.full((G,), -jnp.log(G), dtype=jnp.float32)
+    logc = jnp.array([-jnp.inf, 0.0, 0.0, -jnp.inf], dtype=jnp.float32)   # observed weight 1 (coset {1, 2})
+    for outcome in (0, 1):
+        out = H.exact_ed_update(logpk, p_grid, phi_grid, logc, jnp.float32(0.0), outcome, jnp.float32(0.3))
+        assert bool(jnp.isfinite(out).all()), "NaN/inf in the exact ED update at p in {0, 1}"
+        assert abs(float(jnp.exp(out).sum()) - 1.0) < 1e-4
+    out = H.syndrome_update_homogeneous(logpk, p_grid, 0, N)
+    assert bool(jnp.isfinite(out).all())

@@ -92,6 +92,10 @@ def fmt(key: str, entry) -> str:
         return f"{v:.1f}"
     if last.startswith("N_argmin") or last.startswith("M_exec") or last.startswith("M_max") or last.startswith("n_"):
         return f"{int(round(v))}"
+    if "rel_rms" in last:
+        return f"{100.0 * v:.0f}"                      # printed as a percentage
+    if last.startswith("logfit_"):
+        return f"{v:.1f}"
     if last.startswith("window_shift") or last.startswith("M2sigma2") or last.startswith("visibility"):
         return f"{v:.2f}" if abs(v) >= 0.1 else f"{v:.3f}"
     if last.startswith("prefactor_ratio") or last.startswith("bare_over") or last.startswith("edfl_over") or last.startswith("rej_over"):
