@@ -79,7 +79,11 @@ def fmt(key: str, entry) -> str:
     if v is None or (isinstance(v, float) and math.isnan(v)):
         return r"\textcolor{red}{[NaN " + key + "]}"
     if isinstance(v, (list, tuple)):                  # [min, max] range: "a" if equal after rounding, else "a--b"
-        lo, hi = (fmt(key.replace("_range", ""), {"value": x}) for x in v)
+        base = key.replace("_range", "")
+        if base.rsplit(".", 1)[-1].startswith("alpha"):
+            lo, hi = (f"{x:.3f}" for x in v)          # exponent ranges keep three decimals (0.995--0.996)
+        else:
+            lo, hi = (fmt(base, {"value": x}) for x in v)
         return lo if lo == hi else f"{lo}\\text{{--}}{hi}"
     last = key.rsplit(".", 1)[-1]
     if last.startswith("alpha"):
