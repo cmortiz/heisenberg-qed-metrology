@@ -83,6 +83,13 @@ def grid_resolution(N: int, eps_min: float) -> int:
     return max(16, math.ceil(math.log2(4 * N * M_max_needed)))
 
 
+def window_N_grid(sigma: float, n_points: int = 12) -> list:
+    """Heisenberg-window sweep: 12 log-spaced integers from N*/16 to 4 N*, N* = 1/(2 sigma^2)."""
+    N_star = 1.0 / (2.0 * float(sigma) ** 2)
+    Ns = np.rint(np.geomspace(N_star / 16.0, 4.0 * N_star, n_points)).astype(int)
+    return sorted(set(int(n) for n in np.maximum(Ns, 1)))
+
+
 CSV_COLUMNS = [
     "protocol", "mode", "seed", "epsilon", "gamma", "h", "sigma_epsilon", "L", "N_code", "N_total", "N",
     "q", "k", "F", "estimator", "model",

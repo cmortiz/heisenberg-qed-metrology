@@ -145,6 +145,15 @@ def _rows_in_process(spec, seed, eps_list):
     protocols = pytest.importorskip("eqsp.protocols")
     eio = pytest.importorskip("eqsp.io")
     p = protocols.get_protocol(spec, "cpu")
+    if not hasattr(p, "grid_m"):
+        # NumPy-only sequential adapter: one call produces every requested row
+        out = p.run_seed(seed, np.asarray(eps_list, dtype=float), "test", "none")
+        rows = {}
+        for r in out:
+            for eps in eps_list:
+                if np.isclose(float(r["epsilon"]), eps, rtol=1e-9, atol=0):
+                    rows[eps] = pd.Series(r)
+        return rows, "in-process Sequential.run_seed"
     m = p.grid_m(float(EPS_GRID.min()))
     p.begin_run(seed, m)
     rows = {}
