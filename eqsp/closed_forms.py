@@ -292,3 +292,33 @@ def hwindow_true_prob(omega, N, S, theta, outcome):
     P(+) = (1 + cos(2 (N omega + S) - theta))/2."""
     sign = 1.0 if outcome == 0 else -1.0
     return 0.5 * (1.0 + sign * np.cos(2.0 * (N * omega + S) - theta))
+
+
+def ghz_code_probs_mixture(p, phi, blocks, pattern, V=1.0, q_parity_n=None, q=0.0):
+    """Exact joint likelihood in closed form for odd N_code and an odd number of
+    blocks (every configuration in the paper), equal to ``ghz_code_probs`` to
+    machine precision there (checked 2026-09-02 for 1x3, 1x5, 1x7, 3x3, 3x5;
+    it fails for even N or an even block count, where an extra interference
+    term survives):
+
+        P(s, v) = sum_{x in S(s)} P_cl(x) [1 + v V cos(2 sum_{k not in x} phi_k)] / 2,
+
+    with S(s) the 2^{n_blocks} error patterns consistent with the syndrome
+    (each block's pattern or its complement) and
+    P_cl(x) = prod_{k not in x} (1 - p_k) prod_{k in x} p_k.  The syndrome
+    identifies each block's pattern only up to the logical X, and the two
+    cosets do not interfere in the parity statistics, so the likelihood is a
+    classical mixture of the theorem's closed form over S(s).  The theorem's
+    form keeps the minimum-weight representative only; the dropped terms have
+    relative probability weight (p/(1-p))^{N_code - 2 d_b} per block.
+    """
+    p = np.asarray(p)
+    phi = np.asarray(phi)
+    pattern = np.asarray(pattern, bool)
+    p_plus = 0.0
+    p_minus = 0.0
+    for x in _consistent_patterns(pattern, blocks):
+        pp, pm = ghz_code_probs_theorem(p, phi, x, V=V, q_parity_n=q_parity_n, q=q)
+        p_plus = p_plus + pp
+        p_minus = p_minus + pm
+    return p_plus, p_minus
