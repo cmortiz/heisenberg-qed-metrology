@@ -79,8 +79,22 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
 
 ## Engine contract
 
-1. Float32 log-space grid posterior on $2^m$ points, `jax_enable_x64` off; grid
-   $[0,\pi)$ for `bare_adaptive`, $[0,2\pi)$ for `bare_fixed`, `ed`, `combined`.
+1. Float32 log-space grid posterior on $2^m$ points, `jax_enable_x64` off. The prior
+   support is one period of the coarsest ($M = 1$) parity fringe: $[0, \pi)$ for
+   `bare_adaptive` ($n = 1$ shots), and a window of width $\pi/N$ centred on
+   $\omega$ for `bare_fixed`, `ed` ($N = N_{\rm code}$) and `combined`
+   ($N = N_{\rm total}$); `hwindow` uses $[0, \pi/N)$ with the truth wrapped. Every
+   GHZ shot carries a preparation phase $\theta_i \sim U[0, 2\pi)$ known to the
+   estimator, $(|0\cdots0\rangle + e^{-i\theta_i}|1\cdots1\rangle)/\sqrt2$, so the
+   parity likelihood is $\propto \cos(2\Phi - \theta_i)$ and the sign of the phase is
+   identifiable. Fixed-axis parity alone is even in the phase and $\pi/N$-periodic up
+   to $O(\gamma^2/\Omega^2)$ amplitude terms, so the legacy $[0, 2\pi)$ prior carried
+   near-degenerate mirror modes (v1 non-converged `bare_hamiltonian` rows sit at
+   $|\hat\omega - \omega| \in \{3.138, 2.095, 0.651\}$, the mirrors of $\Omega$ at
+   $\Omega + \pi$, $\Omega + 2\pi/3$, $2\pi - \Omega$) and the v1 depolarizing bare
+   likelihood $\cos(2n\omega)$ was exactly bimodal on $[0, \pi)$; the truth-based
+   legacy stop masked both (finding 2026-09-02). `model=theorem` keeps the legacy
+   grids and no phase for the regression diagnostic.
 2. Per-target RNG stream `default_rng(seed + int(eps*1e8) % 2**31)` (`eps_rng`);
    new draws (readout, prep, hwindow) use `stream_rng(seed, eps, *extra)` and are
    appended after the legacy draws, so `q = 0, k = F = 1` reproduces legacy streams.

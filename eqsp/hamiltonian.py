@@ -32,6 +32,8 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+import math
+
 import numpy as np
 from jax import jit
 from jax.scipy.special import logsumexp
@@ -73,6 +75,50 @@ def ghz_x_parity_grid(omega_grid, gammas, M_evol):
         pairs,
     )
     return final[0]  # Re part
+
+
+@jit
+def ghz_x_parity_grid_complex(omega_grid, gammas, M_evol):
+    """(2, G) array [Re, Im] of prod_k (alpha_k - i beta_k) over the omega grid: the
+    GHZ coherence whose rotation by the preparation phase gives the exact-model
+    parity Re[e^{-i theta} prod_k(...)] (new kernel; same recurrence as
+    ghz_x_parity_grid)."""
+    Omega_k = jnp.sqrt(omega_grid[:, None]**2 + gammas[None, :]**2 + 1e-30)
+    MO = M_evol * Omega_k
+    ratio = omega_grid[:, None] / Omega_k
+    s = jnp.sin(MO)
+    alpha = 1.0 - 2.0 * ratio**2 * s**2
+    beta = 2.0 * ratio * s * jnp.cos(MO)
+
+    def cplx_mul(carry, pair):
+        cr, ci = carry
+        pr, pi = pair
+        return (cr * pr - ci * pi, cr * pi + ci * pr)
+    # Legacy beta = -B of closed_forms.bare_bloch (U^dag X U = A X + B Y + C Z): the legacy scan over
+    # (alpha, -beta) therefore builds the conjugate of prod_k (A_k - i B_k), harmless for the real
+    # part at theta = 0 but wrong for the rotated parity.  Use (alpha, +beta) = (A, -B).
+    init = (jnp.ones_like(omega_grid), jnp.zeros_like(omega_grid))
+    final, _ = jax.lax.scan(lambda carry, p: (cplx_mul(carry, p), None), init, (alpha.T, beta.T))
+    return jnp.stack([final[0], final[1]])
+
+
+@jit
+def bare_parity_update_theta(logpk, coh, theta, log_vis, outcome):
+    """Exact-model bare update, odd N: P(+ | omega) = (1 + e^{log_vis} Re[e^{-i theta} Z])/2
+    with Z = coh[0] + i coh[1] from ghz_x_parity_grid_complex."""
+    x = jnp.exp(log_vis) * (coh[0] * jnp.cos(theta) + coh[1] * jnp.sin(theta))
+    sign = jnp.where(outcome == 0, 1.0, -1.0)
+    likelihood = (1.0 + sign * x) / 2.0
+    log_lik = jnp.log(jnp.maximum(likelihood, LIK_FLOOR))
+    logpk = logpk + log_lik
+    return logpk - logsumexp(logpk)
+
+
+def nyquist_cap(m: int, N: int, period: float) -> int:
+    """Largest depth M such that the grid resolves the M-th fringe: legacy rule
+    2^(m-2) // N on a 2 pi grid (bh:146, ed:163, cb:210), generalised to a prior
+    window of width ``period``: pi 2^m / (2 N period)."""
+    return max(1, int(math.pi * 2**m / (2.0 * N * period)))
 
 
 @jit
@@ -279,14 +325,15 @@ def _finish(logpk, shift, A, Zre, log_vis, outcome):
 
 
 @jit
-def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome):
+def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome, theta=0.0):
     """Exact-model ED update, homogeneous block of N = len(logc) - 1 qubits.
 
     Block factors summed over pattern weight w = 0..N with log coefficients
     ``logc`` (float32, -inf excluded):  plain exact model logc = 0 at w in
     {d, N-d}; q-aware estimator logc[w] = log sum_{|x|=w} q^{d_H(s_obs, dx)}
     (1-q)^{N-1-d_H}; theorem-model q-aware additionally masks w > L.
-    log_vis = log of the inference visibility on the coherent term.
+    log_vis = log of the inference visibility on the coherent term; theta the
+    per-shot preparation phase (cos(2 Phi - theta)).
     """
     N = logc.shape[0] - 1
     w = jnp.arange(N + 1, dtype=jnp.float32)
@@ -297,12 +344,12 @@ def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome):
     shift = jnp.max(la, axis=1)
     e = jnp.exp(la - shift[:, None])
     A = jnp.sum(e, axis=1)
-    Zre = jnp.sum(e * jnp.cos(2.0 * (N - w)[None, :] * phi_grid[:, None]), axis=1)
+    Zre = jnp.sum(e * jnp.cos(2.0 * (N - w)[None, :] * phi_grid[:, None] - theta), axis=1)
     return _finish(logpk, shift, A, Zre, log_vis, outcome)
 
 
 @jit
-def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, outcome):
+def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, outcome, theta=0.0):
     """Exact-model update for B contiguous blocks of N_code qubits (combined).
 
     p_grid, phi_grid: (G, B*N_code) per-qubit grids (cb precomputes).
@@ -335,7 +382,8 @@ def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, ou
         shift = shift + sb
         A = A * Ab
         Z = Z * Zb
-    return _finish(logpk, shift, A, jnp.real(Z), log_vis, outcome)
+    Zre = jnp.real(Z) * jnp.cos(theta) + jnp.imag(Z) * jnp.sin(theta)      # Re[e^{-i theta} Z]
+    return _finish(logpk, shift, A, Zre, log_vis, outcome)
 
 
 # ==========================================================================
@@ -368,8 +416,9 @@ def bare_adaptive_tables(m: int, gamma: float, omega=None):
 
 
 @jit
-def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcome):
-    """P(+ | omega_j) = (1 + e^{log_ro} [e^{log_V} r_j^n cos(n theta_j) + [n even] C_j^n])/2.
+def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcome, theta=0.0):
+    """P(+ | omega_j) = (1 + e^{log_ro} [e^{log_V} r_j^n cos(n psi_j - theta) + [n even] C_j^n])/2,
+    theta the per-shot preparation phase (0 in the legacy model).
 
     The angle n theta_j is computed mod 2pi in 48-bit fixed point (three 16-bit
     limbs, n <= 2^14, all products < 2^31 exact).  At gamma = 0 the angle
@@ -384,7 +433,7 @@ def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcom
     C = n_u * q2
     top = (A >> 16) + B + (C << 16)                       # top 32 bits of n q mod 2^48
     angle = 2.0 * jnp.pi * top.astype(jnp.float32) / 4294967296.0
-    cos_n = jnp.cos(angle)
+    cos_n = jnp.cos(angle - theta)
     rn = jnp.exp(n * logr)
     cn = jnp.where(n % 2 == 0, jnp.exp(n * logC), 0.0)
     x_n = jnp.exp(log_V) * (rn * cos_n) + cn
@@ -485,10 +534,11 @@ def exact_block_terms(p, phi, pattern, n_blocks):
     return A, Z
 
 
-def exact_p_plus(p, phi, pattern, n_blocks, V=1.0):
-    """P(+ | syndrome of pattern) = (1 + V Re prod_b Z_b / prod_b A_b)/2, shot-batched."""
+def exact_p_plus(p, phi, pattern, n_blocks, V=1.0, theta=0.0):
+    """P(+ | syndrome of pattern) = (1 + V Re[e^{-i theta} prod_b Z_b] / prod_b A_b)/2, shot-batched."""
     A, Z = exact_block_terms(p, phi, pattern, n_blocks)
-    return 0.5 * (1.0 + V * np.real(np.prod(Z, axis=1)) / np.prod(A, axis=1))
+    ph = np.exp(-1j * np.asarray(theta, np.float64))
+    return 0.5 * (1.0 + V * np.real(ph * np.prod(Z, axis=1)) / np.prod(A, axis=1))
 
 
 def block_syndromes(pattern, n_blocks):
@@ -547,13 +597,13 @@ def weight_log_coeffs(s_obs_block, q, Nc, theorem_L=None):
     return out
 
 
-def bare_parity_batch(omega, gamma, M, ns):
+def bare_parity_batch(omega, gamma, M, ns, thetas=0.0):
     """(coherent, population) parts of the exact bare parity for an int array ns
-    (float64): r^n cos(n theta) and [n even] C^n.  <X^n> = V * coherent + population
+    (float64): r^n cos(n psi - theta) and [n even] C^n.  <X^n> = V * coherent + population
     under a dephased GHZ of visibility V (closed_forms.bare_parity_prob)."""
-    r, theta, C = cf.bare_polar(omega, gamma, M)
+    r, psi, C = cf.bare_polar(omega, gamma, M)
     ns = np.asarray(ns, np.int64)
-    coherent = r**ns * np.cos(ns * theta)
+    coherent = r**ns * np.cos(ns * psi - np.asarray(thetas, np.float64))
     population = np.where(ns % 2 == 0, C**ns, 0.0)
     return coherent, population
 

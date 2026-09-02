@@ -26,8 +26,8 @@ jax.config.update("jax_enable_x64", False)   # sim:22, bh:34, ed:26, cb:28
 # --------------------------------------------------------------------------
 # Grid and posterior
 # --------------------------------------------------------------------------
-def make_grid(m: int, period: float, builder: Literal["jax32", "np64"]) -> jnp.ndarray:
-    """2^m float32 points on [0, period).
+def make_grid(m: int, period: float, builder: Literal["jax32", "np64"], offset: float = 0.0) -> jnp.ndarray:
+    """2^m float32 points on [offset, offset + period).
 
     jax32: jnp.linspace(..., dtype=float32)            (sim:143, period pi)
     np64:  float64 np.linspace then cast to float32     (bh:156-158, ed:173-175, cb:222-224)
@@ -35,9 +35,9 @@ def make_grid(m: int, period: float, builder: Literal["jax32", "np64"]) -> jnp.n
     """
     grid_size = 2**m
     if builder == "jax32":
-        return jnp.linspace(0, period, grid_size, endpoint=False, dtype=jnp.float32)
+        return jnp.linspace(offset, offset + period, grid_size, endpoint=False, dtype=jnp.float32)
     if builder == "np64":
-        xs_np = np.linspace(0, period, grid_size, endpoint=False, dtype=np.float64)
+        xs_np = np.linspace(offset, offset + period, grid_size, endpoint=False, dtype=np.float64)
         return jnp.array(xs_np, dtype=jnp.float32)
     raise ValueError(f"unknown grid builder {builder!r}")
 

@@ -100,12 +100,14 @@ def bare_polar(omega, gamma, M):
     return np.hypot(A, B), np.arctan2(-B, A), C
 
 
-def bare_parity_coherent(omega, gamma, M, n):
-    """Coherence part Re[(A - iB)^n] of <X^{(x)n}>: the GHZ off-diagonal term,
-    which flips sign between GHZ+ and GHZ- and is scaled by the preparation
-    visibility V."""
+def bare_parity_coherent(omega, gamma, M, n, theta=0.0):
+    """Coherence part Re[e^{-i theta} (A - iB)^n] of <X^{(x)n}>: the GHZ
+    off-diagonal term, which flips sign between GHZ+ and GHZ- and is scaled by
+    the preparation visibility V.  theta is the GHZ preparation phase
+    (|0..0> + e^{-i theta} |1..1>)/sqrt2, the per-shot readout reference that
+    makes the sign of the phase identifiable (2026-09-02)."""
     A, B, _ = bare_bloch(omega, gamma, M)
-    return ((A - 1j * B) ** n).real
+    return (np.exp(-1j * np.asarray(theta, float)) * (A - 1j * B) ** n).real
 
 
 def bare_parity_population(omega, gamma, M, n):
@@ -115,14 +117,14 @@ def bare_parity_population(omega, gamma, M, n):
     return C**n if n % 2 == 0 else 0.0 * np.asarray(C)
 
 
-def bare_parity_prob(omega, gamma, M, n, outcome, q=0.0, V=1.0):
+def bare_parity_prob(omega, gamma, M, n, outcome, q=0.0, V=1.0, theta=0.0):
     """P(outcome | omega) for bare GHZ parity.  Readout flips scale the whole
     parity expectation by (1-2q)^n; the preparation visibility V scales only
     the coherent term (the even-n population term C^n survives dephasing;
     finding from tests/test_closed_forms_pennylane.py, 2026-09-02).
     outcome 0 -> +."""
     sign = 1.0 if outcome == 0 else -1.0
-    x_n = V * bare_parity_coherent(omega, gamma, M, n) + bare_parity_population(omega, gamma, M, n)
+    x_n = V * bare_parity_coherent(omega, gamma, M, n, theta) + bare_parity_population(omega, gamma, M, n)
     return 0.5 * (1.0 + sign * readout_visibility(q, n) * x_n)
 
 
@@ -154,7 +156,7 @@ def _consistent_patterns(pattern, blocks):
     return out
 
 
-def ghz_code_probs(a, c, blocks, pattern, V=1.0, q_parity_n=None, q=0.0):
+def ghz_code_probs(a, c, blocks, pattern, V=1.0, q_parity_n=None, q=0.0, theta=0.0):
     """Exact joint probabilities (P(s, +), P(s, -)) of observing the syndrome
     of ``pattern`` and each parity outcome, for a GHZ state over all qubits in
     ``blocks`` evolved by the per-qubit unitaries with amplitudes (a_k, c_k)
@@ -165,10 +167,12 @@ def ghz_code_probs(a, c, blocks, pattern, V=1.0, q_parity_n=None, q=0.0):
     coherent parity term scales by V.  q is a per-bit readout flip probability
     applied to the parity readout as (1-2q)^{q_parity_n} (default: all N
     qubits); syndrome-bit flips are handled by ``flipped_syndrome_weights``.
+    theta is the preparation phase of the |1...1> branch (e^{-i theta}).
     """
     a = np.asarray(a)
     c = np.asarray(c)
     N = a.shape[-1]
+    ph = np.exp(-1j * np.asarray(theta, float))
     pattern = np.asarray(pattern, bool)
     xs = _consistent_patterns(pattern, blocks)
     # Pair each x with its global complement; visit each pair once.
@@ -184,6 +188,8 @@ def ghz_code_probs(a, c, blocks, pattern, V=1.0, q_parity_n=None, q=0.0):
         seen.add(tuple(xbar.tolist()))
         T0x, T1x = _branch_amplitudes(a, c, x)
         T0b, T1b = _branch_amplitudes(a, c, xbar)
+        T1x = T1x * ph
+        T1b = T1b * ph
         # diagonal (V-independent) and coherent (x V) pieces, see module doc
         diag = 0.5 * (np.abs(T0x) ** 2 + np.abs(T1x) ** 2 + np.abs(T0b) ** 2 + np.abs(T1b) ** 2)
         diag = diag + V * (np.conj(T0x) * T1x + np.conj(T0b) * T1b).real
@@ -211,15 +217,15 @@ def _branch_amplitudes(a, c, x):
     return T0, T1
 
 
-def ghz_code_probs_theorem(p, phi, pattern, V=1.0, q_parity_n=None, q=0.0):
+def ghz_code_probs_theorem(p, phi, pattern, V=1.0, q_parity_n=None, q=0.0, theta=0.0):
     """Theorem thm:bitflip / legacy model: P(s) = prod_k p_k^{e_k}(1-p_k)^{1-e_k}
-    (one representative pattern), P(+/-|s) = (1 +/- V cos(2 sum_{k clean} phi_k))/2."""
+    (one representative pattern), P(+/-|s) = (1 +/- V cos(2 sum_{k clean} phi_k - theta))/2."""
     p = np.asarray(p)
     phi = np.asarray(phi)
     pattern = np.asarray(pattern, bool)
     Ps = np.prod(np.where(pattern, p, 1.0 - p), axis=-1)
     phi_eff = np.sum(np.where(pattern, 0.0, phi), axis=-1)
-    coh = V * np.cos(2.0 * phi_eff)
+    coh = V * np.cos(2.0 * phi_eff - theta)
     if q:
         n_par = p.shape[-1] if q_parity_n is None else q_parity_n
         coh = coh * readout_visibility(q, n_par)
@@ -259,7 +265,7 @@ def flipped_syndrome_weights(s_obs, blocks, q):
     return out
 
 
-def qaware_probs(a, c, blocks, s_obs, q, V=1.0, model="exact"):
+def qaware_probs(a, c, blocks, s_obs, q, V=1.0, model="exact", theta=0.0):
     """P(s_obs, +/-) under readout flips on every syndrome bit and every
     parity bit: sum over true syndromes s of P(s, +/-)(omega) weighted by the
     flip probability of s -> s_obs, with the parity visibility (1-2q)^N.
@@ -280,10 +286,10 @@ def qaware_probs(a, c, blocks, s_obs, q, V=1.0, model="exact"):
         dH = int(np.sum(np.array(key) != s_obs))
         w = q**dH * (1.0 - q) ** (n_syn - dH)
         if model == "exact":
-            pp, pm = ghz_code_probs(a, c, blocks, E, V=V, q=q)
+            pp, pm = ghz_code_probs(a, c, blocks, E, V=V, q=q, theta=theta)
         else:
             p, phi = np.abs(c) ** 2, -np.angle(a)
-            pp, pm = ghz_code_probs_theorem(p, phi, E, V=V, q=q)
+            pp, pm = ghz_code_probs_theorem(p, phi, E, V=V, q=q, theta=theta)
         p_plus = p_plus + w * pp
         p_minus = p_minus + w * pm
     return p_plus, p_minus
@@ -313,7 +319,7 @@ def hwindow_true_prob(omega, N, S, theta, outcome):
     return 0.5 * (1.0 + sign * np.cos(2.0 * (N * omega + S) - theta))
 
 
-def ghz_code_probs_mixture(p, phi, blocks, pattern, V=1.0, q_parity_n=None, q=0.0):
+def ghz_code_probs_mixture(p, phi, blocks, pattern, V=1.0, q_parity_n=None, q=0.0, theta=0.0):
     """Exact joint likelihood in closed form for odd N_code and an odd number of
     blocks (every configuration in the paper), equal to ``ghz_code_probs`` to
     machine precision there (checked 2026-09-02 for 1x3, 1x5, 1x7, 3x3, 3x5;
@@ -337,7 +343,7 @@ def ghz_code_probs_mixture(p, phi, blocks, pattern, V=1.0, q_parity_n=None, q=0.
     p_plus = 0.0
     p_minus = 0.0
     for x in _consistent_patterns(pattern, blocks):
-        pp, pm = ghz_code_probs_theorem(p, phi, x, V=V, q_parity_n=q_parity_n, q=q)
+        pp, pm = ghz_code_probs_theorem(p, phi, x, V=V, q_parity_n=q_parity_n, q=q, theta=theta)
         p_plus = p_plus + pp
         p_minus = p_minus + pm
     return p_plus, p_minus

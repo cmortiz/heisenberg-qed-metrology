@@ -6880,6 +6880,26 @@
   "n_rows": null,
   "note": "alpha_full minus alpha_asymptotic for this cell (replaces the paper's WLS sentence)"
  },
+ "text.combined.alpha_asym_max_edfl": {
+  "value": 1.1004430826479832,
+  "sem": 0.012557726368065826,
+  "window": "asymptotic",
+  "min_points": null,
+  "source_csv": "combined_full_likelihood.csv",
+  "n_seeds": 40,
+  "n_rows": null,
+  "note": "largest asymptotic alpha over combined ED-FL cells; attained at L=1 gamma=0.05 sigma=0.05"
+ },
+ "text.combined.per_block_accept_gap_L1_g0.05_s0.01": {
+  "value": 0.46159925978925287,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "combined_postselect.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "|cube root of the combined L=1 gamma=0.05 sigma=0.01 joint acceptance - ED L=1 gamma=0.05 acceptance| in points"
+ },
  "text.combined.per_block_accept_pct_L1_g0.01_s0.01": {
   "value": 99.85381124293689,
   "sem": null,
@@ -7850,6 +7870,32 @@
   "n_rows": null,
   "note": "smallest per-seed mean saturation ratio over the ED-FL cells and the combined-FL cells with sigma in [0.01, 0.05]"
  },
+ "text.fit.window_shift_combfl_range": {
+  "value": [
+   0.184662239399366,
+   0.517236205297358
+  ],
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": null,
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] of |alpha_full - alpha_asymptotic| over combined ED-FL table cells"
+ },
+ "text.fit.window_shift_edfl_range": {
+  "value": [
+   0.024003704857256336,
+   0.187143465041961
+  ],
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": null,
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] of |alpha_full - alpha_asymptotic| over ED-FL table cells"
+ },
  "text.fit.window_shift_max": {
   "value": 0.517236205297358,
   "sem": null,
@@ -8030,6 +8076,84 @@
   "n_rows": null,
   "note": "legacy CSV column M_max_used = ceil((pi/2)/(2 eps sqrt(N))), max over cells at eps_tar = 0.00961725; not the executed depth (simulation_sequential.py:130)"
  },
+ "text.sequential.alpha_full_noiseless": {
+  "value": [
+   0.9951993831976736,
+   0.9959571529579471
+  ],
+  "sem": null,
+  "window": "full",
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of the full-range alpha at sigma = 0"
+ },
+ "text.sequential.alpha_full_s0.01": {
+  "value": [
+   1.0244465476475324,
+   1.0302162561241857
+  ],
+  "sem": null,
+  "window": "full",
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of the full-range alpha at sigma = 0.01"
+ },
+ "text.sequential.alpha_full_s0.05": {
+  "value": [
+   1.0145279174848347,
+   1.0253608436302177
+  ],
+  "sem": null,
+  "window": "full",
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of the full-range alpha at sigma = 0.05"
+ },
+ "text.sequential.conv_noiseless_range": {
+  "value": [
+   82.70833333333333,
+   92.375
+  ],
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of Converged (%) at sigma = 0"
+ },
+ "text.sequential.conv_s0.01_range": {
+  "value": [
+   45.04166666666667,
+   49.916666666666664
+  ],
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of Converged (%) at sigma = 0.01"
+ },
+ "text.sequential.conv_s0.05_range": {
+  "value": [
+   22.5,
+   25.874999999999996
+  ],
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "[min, max] over L of Converged (%) at sigma = 0.05"
+ },
  "text.sequential.eps_quoted": {
   "value": 0.0096172487112,
   "sem": null,
@@ -8039,6 +8163,26 @@
   "n_seeds": null,
   "n_rows": null,
   "note": "grid point used for the depth quotes"
+ },
+ "text.sequential.visibility_s0.01_eps1e-2": {
+  "value": 0.8148102621687294,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps"
+ },
+ "text.sequential.visibility_s0.05_eps1e-2": {
+  "value": 0.0059760228950059375,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps"
  },
  "text.weak_noise_map.gamma_ham_p0.01": {
   "value": 0.10151590085472369,

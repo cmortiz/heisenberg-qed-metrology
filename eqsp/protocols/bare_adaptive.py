@@ -36,6 +36,7 @@ class BareAdaptive:
         self.omega_true = OMEGA_TRUE
         self.gamma = float(spec.gamma)
         self.aware = spec.estimator == "aware"
+        self.theorem = spec.model == "theorem"        # legacy model: no preparation phase
         self.draws: dict = {}
 
     # -- run level -----------------------------------------------------------
@@ -60,16 +61,22 @@ class BareAdaptive:
         ns = rng.integers(1, N + 1, n_exp)                              # sim:161
         uniforms = rng.random(n_exp)                                    # sim:162
         self.draws = {"ns": ns, "uniforms": uniforms}
-        # truth: exact bare parity, prep visibility k^(n-1) F, float64
-        coherent, population = H.bare_parity_batch(self.omega_true, self.gamma, 1, ns)
-        V = cf.prep_visibility(spec.k, spec.F, ns)
-        p_plus = 0.5 * (1.0 + V * coherent + population)      # V scales the coherent term only
-        outcomes = np.where(uniforms < p_plus, 0, 1)
+        u_r = None
         if spec.q > 0:
             u_r = rng.random(n_exp)                                     # appended after legacy draws
             self.draws["uniforms_readout_parity"] = u_r
+        # per-shot preparation phase theta_i ~ U[0, 2pi) (exact model; drawn last)
+        thetas = np.zeros(n_exp) if self.theorem else rng.uniform(0.0, 2.0 * np.pi, n_exp)
+        self.draws["thetas"] = thetas
+        # truth: exact bare parity, prep visibility k^(n-1) F, float64
+        coherent, population = H.bare_parity_batch(self.omega_true, self.gamma, 1, ns, thetas)
+        V = cf.prep_visibility(spec.k, spec.F, ns)
+        p_plus = 0.5 * (1.0 + V * coherent + population)      # V scales the coherent term only
+        outcomes = np.where(uniforms < p_plus, 0, 1)
+        if u_r is not None:
             outcomes = outcomes ^ (u_r < H.parity_flip_prob(spec.q, ns)).astype(int)
         self.ns = ns
+        self.thetas = thetas
         self.outcomes = outcomes
         if self.aware:
             self.log_ro = ns * math.log1p(-2.0 * spec.q)
@@ -81,12 +88,14 @@ class BareAdaptive:
     def draw(self, i: int) -> Shot:
         n = int(self.ns[i])
         return Shot(cost=n, rejected=False, outcome=int(self.outcomes[i]), key=n,
-                    aux={"n": n, "log_ro": float(self.log_ro[i]), "log_V": float(self.log_V[i])})
+                    aux={"n": n, "log_ro": float(self.log_ro[i]), "log_V": float(self.log_V[i]),
+                         "theta": float(self.thetas[i])})
 
     def apply(self, logpk, shot: Shot):
         q0, q1, q2, logr, logC = self.tables
         return H.bare_adaptive_update(logpk, q0, q1, q2, logr, logC, shot.key,
-                                      shot.aux["log_ro"], shot.aux["log_V"], shot.outcome)
+                                      shot.aux["log_ro"], shot.aux["log_V"], shot.outcome,
+                                      jnp.float32(shot.aux["theta"]))
 
     def account(self, shot: Shot, ctr) -> None:
         ctr.sum_M_sq += 1.0

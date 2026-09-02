@@ -394,3 +394,25 @@ def test_posterior_rule_exhausting_budget_is_not_converged_and_records_std():
     assert not res.converged and ctr.n_rounds == 6 and ctr.n_updates == 6
     assert abs(ctr.posterior_std - 2 * math.pi / math.sqrt(12)) < 1e-2   # uniform on the circle
     assert p.check_calls == []                                            # cadence never consulted
+
+
+def test_make_grid_offset_window():
+    xs = np.asarray(engine.make_grid(8, 0.5, "np64", offset=0.3 - 0.25))
+    assert abs(xs[0] - 0.05) < 1e-6 and xs[-1] < 0.55 and abs((xs[1] - xs[0]) - 0.5 / 256) < 1e-6
+    xs2 = np.asarray(engine.make_grid(8, 0.5, "jax32", offset=0.05))
+    assert np.allclose(xs, xs2, atol=1e-6)
+
+
+def test_fixed_N_complex_kernel_matches_closed_form_sign():
+    """ghz_x_parity_grid_complex returns prod_k (A_k - i B_k) of closed_forms.bare_bloch, including
+    the sign of the imaginary part (the legacy real-part-only kernel hid a conjugation)."""
+    from eqsp import closed_forms as cf, hamiltonian as H
+    om = np.array([0.1, 0.3, 0.7], np.float32)
+    for gamma, M, N in [(0.05, 7, 3), (0.1, 123, 5)]:
+        Z = np.asarray(H.ghz_x_parity_grid_complex(jnp.asarray(om), jnp.full(N, gamma, np.float32), jnp.float32(M)))
+        A, B, _ = cf.bare_bloch(om.astype(float), gamma, M)
+        ref = (A - 1j * B) ** N
+        assert np.allclose(Z[0], ref.real, atol=1e-4) and np.allclose(Z[1], ref.imag, atol=1e-4), (gamma, M, N)   # float32 M Omega
+        for theta in (0.7, 2.9):
+            assert np.allclose(Z[0] * np.cos(theta) + Z[1] * np.sin(theta),
+                               cf.bare_parity_coherent(om.astype(float), gamma, M, N, theta), atol=1e-4)

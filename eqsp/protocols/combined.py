@@ -42,6 +42,11 @@ class Combined:
             raise ValueError("combined: h > 0 is supported only with model=theorem")
         self.Nc = spec.N_code
         self.N = N_BLOCKS * self.Nc
+        if self.theorem:
+            self.period, self.grid_offset = 2.0 * float(np.pi), 0.0        # legacy [0, 2pi)
+        else:
+            self.period = float(np.pi) / self.N                           # one M = 1 fringe period of the N_total parity
+            self.grid_offset = OMEGA_TRUE - 0.5 * self.period
         self.L = spec.L
         self.sigma = float(spec.sigma)
         self.cfg = EngineConfig(stop=spec.stop, max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
@@ -63,7 +68,7 @@ class Combined:
 
     def begin_run(self, seed: int, m: int) -> None:
         self.m = m
-        self.xs = make_grid(m, 2.0 * np.pi, "np64")
+        self.xs = make_grid(m, self.period, "np64", offset=self.grid_offset)
         self.omega_grid = self.xs
         rng_seed = seed_rng(seed)                                        # cb:465
         if self.sigma > 0:
@@ -86,8 +91,8 @@ class Combined:
         spec = self.spec
         N, Nc = self.N, self.Nc
         M_max = max(1, int(1.0 / (eps * N)))                             # cb:209
-        nyquist_limit = (2 ** (self.m - 2)) // N
-        M_max = min(M_max, max(1, nyquist_limit))                        # cb:210-211
+        nyquist_limit = H.nyquist_cap(self.m, N, self.period)            # cb:210-211 on a 2 pi grid
+        M_max = min(M_max, max(1, nyquist_limit))
         self.M_max = M_max
         n_exp = self.cfg.max_experiments
         self.draws = {}
@@ -128,6 +133,11 @@ class Combined:
             syn_obs = syn_true
         pattern_obs = H.decode_min_weight(syn_obs)                        # (S, N)
         d_obs_blocks = pattern_obs.reshape(n_exp, N_BLOCKS, Nc).sum(axis=2)
+        # exact model: per-shot preparation phase, drawn after every legacy and readout draw
+        self.thetas = np.zeros(n_exp)
+        if not self.theorem:
+            self.thetas = rng.uniform(0.0, 2.0 * np.pi, n_exp)
+            self.draws["thetas"] = self.thetas
 
         if self.theorem:
             if self.fl:
@@ -137,7 +147,7 @@ class Combined:
                 phi_eff_true = np.sum(phi_all, axis=1)                    # cb:264, :402-404
             p_plus = (1.0 + self.V * np.cos(2.0 * phi_eff_true)) / 2.0
         else:
-            p_plus = H.exact_p_plus(p_all, phi_all, errors_all, N_BLOCKS, V=self.V)
+            p_plus = H.exact_p_plus(p_all, phi_all, errors_all, N_BLOCKS, V=self.V, theta=self.thetas)
         outcomes = np.where(uniforms_outcome < p_plus, 0, 1)             # cb:330, :407
         if spec.q > 0:
             outcomes = outcomes ^ (u_par < H.parity_flip_prob(spec.q, N)).astype(int)
@@ -157,7 +167,7 @@ class Combined:
         d = int(self.d_total[i])
         rejected = bool((not self.fl) and self.reject[i])
         aux = {"M": M_evol, "d": d, "N_eff": self.N - d, "pattern_inf": self.pattern_inf[i],
-               "true_errors": self.errors_all[i]}
+               "true_errors": self.errors_all[i], "theta": float(self.thetas[i])}
         if self.qaware:
             aux["logw"] = self.logw_all[i]
         return Shot(cost=self.N * M_evol, rejected=rejected, outcome=int(self.outcomes[i]), key=M_evol, aux=aux)
@@ -204,7 +214,7 @@ class Combined:
             logw = jnp.asarray(logw_np)
         marg_coef = 2.0 * (M_evol ** 2) * (self.sigma ** 2) if self.marg else 0.0
         return H.exact_blocks_update(logpk, p_pq, phi_pq, X, logw, jnp.float32(self.log_vis),
-                                     jnp.float32(marg_coef), shot.outcome)
+                                     jnp.float32(marg_coef), shot.outcome, jnp.float32(shot.aux["theta"]))
 
     def account(self, shot: Shot, ctr) -> None:
         M = shot.key

@@ -67,7 +67,7 @@ def syndrome_pairs(blocks):
     return [(b[j], b[j + 1]) for b in blocks for j in range(len(b) - 1)]
 
 
-def joint_probs(omegas, gammas, M, blocks, ghz_sign=+1, bitflip_q=None):
+def joint_probs(omegas, gammas, M, blocks, ghz_sign=+1, bitflip_q=None, theta=0.0):
     """P over (data wires, ancilla wires) after GHZ -> U^{(x)N} -> syndromes ->
     Hadamards.  ``bitflip_q`` applies qml.BitFlip to every wire (default.mixed)."""
     N = len(omegas)
@@ -81,6 +81,8 @@ def joint_probs(omegas, gammas, M, blocks, ghz_sign=+1, bitflip_q=None):
         qml.Hadamard(wires=0)
         if ghz_sign < 0:
             qml.PauliZ(wires=0)
+        if theta:
+            qml.PhaseShift(-theta, wires=0)       # (|0..0> + e^{-i theta} |1..1>)/sqrt2 after the CNOTs
         for k in range(N - 1):
             qml.CNOT(wires=[k, k + 1])
         for k in range(N):
@@ -637,3 +639,38 @@ def test_marg_log_visibility_matches_gaussian_average():
     val, _ = quad(integrand, -12 * sd, 12 * sd, limit=400, epsabs=1e-13)
     expect = math.exp(cf.marg_log_visibility(M, N_clean, sigma)) * math.cos(2 * M * N_clean * omega)
     assert abs(val - expect) < 1e-8
+
+
+# --------------------------------------------------------------------------
+# (vii) preparation phase theta: coherent term rotates, population term does not
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("theta", [0.7, 2.9])
+@pytest.mark.parametrize("n,gamma,M", [(3, 0.1, 7), (4, 0.3, 5), (5, 0.05, 123)])
+def test_bare_parity_with_preparation_phase(n, gamma, M, theta):
+    omegas, gammas = np.full(n, OMEGA), np.full(n, gamma)
+    P = to_syndrome_parity(joint_probs(omegas, gammas, M, [[k] for k in range(n)], theta=theta), n, 0)
+    assert abs(cf.bare_parity_prob(OMEGA, gamma, M, n, 0, theta=theta) - P[((), 0)]) < TOL
+    assert abs(cf.bare_parity_prob(OMEGA, gamma, M, n, 1, theta=theta) - P[((), 1)]) < TOL
+    r, psi, C = cf.bare_polar(OMEGA, gamma, M)
+    expect = r**n * math.cos(n * psi - theta) + (C**n if n % 2 == 0 else 0.0)
+    assert abs(expect - (P[((), 0)] - P[((), 1)])) < TOL
+
+
+@pytest.mark.parametrize("theta", [0.7, 2.9])
+@pytest.mark.parametrize("layout,gamma,M", [("N3", 0.1, 7), ("N5", 0.05, 123), ("3x3", 0.3, 5)])
+def test_code_probs_with_preparation_phase(layout, gamma, M, theta):
+    """Dense form and coset mixture with the branch phase e^{-i theta}: P(s, v) =
+    sum_x P_cl(x) [1 + v cos(2 Phi_x - theta)]/2."""
+    blocks = LAYOUTS[layout]
+    omegas, gammas = homogeneous(blocks, gamma)
+    N = len(omegas)
+    n_syn = len(syndrome_pairs(blocks))
+    P = to_syndrome_parity(joint_probs(omegas, gammas, M, blocks, theta=theta), N, n_syn)
+    p, phi = cf.bitflip_params(omegas, gammas, M)
+    a, c = cf.single_qubit_amplitudes(omegas, gammas, M)
+    for s in all_syndromes(n_syn):
+        pat = representative_pattern(s, blocks, N)
+        pp, pm = cf.ghz_code_probs_mixture(p, phi, blocks, pat, theta=theta)
+        assert abs(pp - P[(s, 0)]) < TOL and abs(pm - P[(s, 1)]) < TOL, (layout, s, theta)
+        pp2, pm2 = cf.ghz_code_probs(a, c, blocks, pat, theta=theta)
+        assert abs(pp2 - P[(s, 0)]) < TOL and abs(pm2 - P[(s, 1)]) < TOL, (layout, s, theta)

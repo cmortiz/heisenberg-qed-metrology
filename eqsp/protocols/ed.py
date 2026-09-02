@@ -40,6 +40,11 @@ class ErrorDetected:
             raise ValueError("ed: h > 0 is supported only for inference=ps with model=theorem (ed:157)")
         self.cfg = EngineConfig(stop=spec.stop, max_experiments=50000, check_every=10 if self.fl else 100, check_counter="update")
         self.omega_true = OMEGA_TRUE
+        if self.theorem:
+            self.period, self.grid_offset = 2.0 * float(np.pi), 0.0        # legacy [0, 2pi)
+        else:
+            self.period = float(np.pi) / self.N                           # one M = 1 fringe period, centred on omega
+            self.grid_offset = OMEGA_TRUE - 0.5 * self.period
         self.V = cf.prep_visibility(spec.k, spec.F, self.N)
         self.aware = spec.estimator == "aware"
         self.qaware = self.aware and spec.q > 0
@@ -54,7 +59,7 @@ class ErrorDetected:
 
     def begin_run(self, seed: int, m: int) -> None:
         self.m = m
-        self.xs = make_grid(m, 2.0 * np.pi, "np64")
+        self.xs = make_grid(m, self.period, "np64", offset=self.grid_offset)
         self.omega_grid = self.xs
         self._new_caches()
 
@@ -68,8 +73,8 @@ class ErrorDetected:
         spec = self.spec
         N = self.N
         M_max = max(1, int(1.0 / (eps * N)))                             # ed:161
-        nyquist_limit = (2 ** (self.m - 2)) // N
-        M_max = min(M_max, max(1, nyquist_limit))                        # ed:163-164
+        nyquist_limit = H.nyquist_cap(self.m, N, self.period)            # ed:163-164 on a 2 pi grid
+        M_max = min(M_max, max(1, nyquist_limit))
         self.M_max = M_max
         n_exp = self.cfg.max_experiments
         self.draws = {}
@@ -105,6 +110,11 @@ class ErrorDetected:
             syn_obs = syn_true
         pattern_obs = H.decode_min_weight(syn_obs)                        # (S, N), weight <= L
         d_obs = pattern_obs.sum(axis=1)
+        # exact model: per-shot preparation phase, drawn after every legacy and readout draw
+        self.thetas = np.zeros(n_exp)
+        if not self.theorem:
+            self.thetas = rng.uniform(0.0, 2.0 * np.pi, n_exp)
+            self.draws["thetas"] = self.thetas
 
         if self.theorem:
             if self.fl:
@@ -114,7 +124,7 @@ class ErrorDetected:
                 phi_eff_true = np.sum(phi_all, axis=1)                    # ed:200, :284
             p_plus = (1.0 + self.V * np.cos(2.0 * phi_eff_true)) / 2.0
         else:
-            p_plus = H.exact_p_plus(p_all, phi_all, errors_all, 1, V=self.V)
+            p_plus = H.exact_p_plus(p_all, phi_all, errors_all, 1, V=self.V, theta=self.thetas)
         outcomes = np.where(uniforms_outcome < p_plus, 0, 1)             # ed:240, :286
         if spec.q > 0:
             outcomes = outcomes ^ (u_par < H.parity_flip_prob(spec.q, N)).astype(int)
@@ -132,7 +142,7 @@ class ErrorDetected:
         M_evol = int(self.M_evols[i])
         d = int(self.d_all[i])
         rejected = bool((not self.fl) and self.reject[i])
-        aux = {"M": M_evol, "d": d, "N_eff": self.N - d, "d_inf": int(self.d_inf[i])}
+        aux = {"M": M_evol, "d": d, "N_eff": self.N - d, "d_inf": int(self.d_inf[i]), "theta": float(self.thetas[i])}
         if self.qaware:
             aux["logc"] = self.logc_all[i]
         return Shot(cost=self.N * M_evol, rejected=rejected, outcome=int(self.outcomes[i]), key=M_evol, aux=aux)
@@ -168,7 +178,7 @@ class ErrorDetected:
             if self.theorem:
                 logc[N - d] = -np.inf                                     # theorem + q>0 mismatched: one coset member
         return H.exact_ed_update(logpk, p_grid, phi_grid, jnp.asarray(logc, dtype=jnp.float32),
-                                 jnp.float32(self.log_vis), shot.outcome)
+                                 jnp.float32(self.log_vis), shot.outcome, jnp.float32(shot.aux["theta"]))
 
     def account(self, shot: Shot, ctr) -> None:
         M = shot.key
