@@ -6,9 +6,12 @@
 
 Every number printed in the manuscript's numerics section comes from this
 substitution, so the text never carries arithmetic of its own.  Keys are the
-dotted names of results/numbers_schema.md; the paper uses a few short aliases
-(``conv`` = ``converged_pct``, ``alpha_asym`` = ``alpha_asymptotic``,
-``accept`` = ``accept_pct``, ``comb_`` = ``combined_``, ``seq_`` = ``sequential_``).
+dotted names of results/numbers_schema.md; the paper uses the short aliases of
+``ALIASES`` (``conv`` = ``converged_pct``, ``alpha_asym`` = ``alpha_asymptotic``,
+``accept`` = ``accept_pct``, ``comb_`` = ``combined_``, ``seq_`` = ``sequential_``,
+``per_block_accept_`` = ``per_block_accept_pct_``, ``g0`` = ``g0.00``, and
+``alpha_full`` = ``alpha`` for tables whose headline window is the full range) plus
+``EXTRA`` (``<cell>.accept`` = the rejection-mode ``accept_pct`` of that cell).
 Formatting is decided by the key suffix (see ``fmt``).  With --write the file is
 rewritten in place and a ``\\NUMSRC`` comment line lists the numbers.json path and
 the git SHA of the data, so the substitution is reproducible.
@@ -94,8 +97,8 @@ def fmt(key: str, entry) -> str:
         if sem is not None and not math.isnan(sem):
             return f"{v:.2f} \\pm {sem:.2f}" if sem >= 0.005 else f"{v:.3f} \\pm {sem:.3f}"
         return f"{v:.2f}"
-    if last in ("converged_pct", "conv") or last.startswith("conv"):
-        return f"{v:.1f}" if "min" in last else f"{v:.0f}"   # a minimum keeps one decimal so "at least 99.6%" never rounds to 100
+    if last.startswith("conv"):
+        return f"{v:.1f}" if last.endswith("_min") or "_min_" in last else f"{v:.0f}"   # a minimum keeps one decimal so "at least 99.6%" never rounds to 100
     if last.startswith("accept"):
         return f"{v:.1f}"
     if last.startswith("N_argmin") or last.startswith("M_exec") or last.startswith("M_max") or last.startswith("n_"):
@@ -105,7 +108,9 @@ def fmt(key: str, entry) -> str:
     if last.startswith("logfit_"):
         return f"{v:.1f}"
     if last.startswith("window_shift") or last.startswith("M2sigma2") or last.startswith("visibility"):
-        return f"{v:.2f}" if abs(v) >= 0.1 else f"{v:.3f}"
+        return f"{v:.2f}" if abs(v) >= 0.1 else f"{v:.3f}"   # two significant figures for these O(0.01) to O(1) quantities
+    if last.startswith("nonconv_error"):
+        return f"{v:.0f}"
     if last.startswith("prefactor_ratio") or last.startswith("bare_over") or last.startswith("edfl_over") or last.startswith("rej_over"):
         return f"{v:.1f}" if v >= 10 else f"{v:.2f}"
     if last.endswith("_C") or last == "C":

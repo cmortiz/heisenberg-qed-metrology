@@ -4,11 +4,11 @@ Every likelihood the engine uses is derived here from the circuit
 U_k = exp(-i M (omega Z_k + gamma_k X_k)) acting on a GHZ state
 (|0...0> + |1...1>)/sqrt(2), followed by Z_i Z_{i+1} syndrome measurements
 within repetition-code blocks and an X^{(x)N} parity readout.  Functions
-suffixed ``_theorem`` reproduce the closed forms stated in Theorem
+``ghz_code_probs_theorem`` reproduces the closed form stated in Theorem
 ``thm:bitflip`` of sensing.tex (and the legacy simulators); the unsuffixed
 ``ghz_code_probs`` is the exact circuit likelihood, which additionally keeps
-the logical-X coset partner of each syndrome (relative weight
-(p/(1-p))^{(N-2d)/2}).  ``tests/test_closed_forms_pennylane.py`` checks these
+the logical-X coset partner of each syndrome (relative probability weight
+(p/(1-p))^{N-2d}; the amplitude ratio is its square root).  ``tests/test_closed_forms_pennylane.py`` checks these
 against a PennyLane state-vector simulation; JAX kernels in ``hamiltonian.py``
 must agree with these functions to float32 precision.
 
@@ -301,7 +301,8 @@ def qaware_probs(a, c, blocks, s_obs, q, V=1.0, model="exact", theta=0.0):
 def marg_log_visibility(M, N_clean, sigma):
     """Analytic Gaussian marginalisation of shot-to-shot offsets eps_k ~ N(0, sigma^2)
     on N_clean qubits at depth M: E[cos(2M sum_k (omega+eps_k))] = cos(2 M N_clean omega)
-    e^{-2 M^2 N_clean sigma^2} (leading order in the offsets)."""
+    e^{-2 M^2 N_clean sigma^2}, exact for Gaussian offsets (characteristic function
+    of the offset sum; sensing.tex, proof of Lemma lem:ghz-noise-marginalization)."""
     return -2.0 * M**2 * N_clean * sigma**2
 
 
@@ -319,6 +320,9 @@ def hwindow_true_prob(omega, N, S, theta, outcome):
     return 0.5 * (1.0 + sign * np.cos(2.0 * (N * omega + S) - theta))
 
 
+# --------------------------------------------------------------------------
+# Repetition code: exact mixture closed form (odd N_code, odd block count)
+# --------------------------------------------------------------------------
 def ghz_code_probs_mixture(p, phi, blocks, pattern, V=1.0, q_parity_n=None, q=0.0, theta=0.0):
     """Exact joint likelihood in closed form for odd N_code and an odd number of
     blocks (every configuration in the paper), equal to ``ghz_code_probs`` to

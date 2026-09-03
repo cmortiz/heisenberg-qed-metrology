@@ -9,7 +9,6 @@ RNG conventions (plan, 'RNG plan'):
 from __future__ import annotations
 
 import fcntl
-import math
 import os
 from pathlib import Path
 
@@ -103,14 +102,14 @@ def make_row(spec: RunSpec, seed: int, eps: float, result, engine_version: str, 
         "n_updates": int(ctr.n_updates),
         "n_accepted": int(ctr.n_accepted),
         "n_rejected": int(ctr.n_rejected),
-        "acceptance_rate": ctr.n_accepted / max(1, ctr.n_accepted + ctr.n_rejected),
+        "acceptance_rate": (ctr.n_accepted / (ctr.n_accepted + ctr.n_rejected)) if (ctr.n_accepted + ctr.n_rejected) > 0 else nan,
         "n_syndrome_used": int(ctr.n_syndrome_used),
-        "mean_d": (ctr.sum_d / ctr.n_updates) if ctr.n_updates > 0 else 0.0,
+        "mean_d": (ctr.sum_d / ctr.n_updates) if ctr.n_updates > 0 else nan,   # NaN, like every column with no shots behind it
         "sum_F_obs": float(ctr.sum_F_obs),
         "sum_M_sq": float(ctr.sum_M_sq),
         "M_exec_max": int(ctr.M_exec_max) if ctr.M_exec_max > 0 else nan,
         "stop_rule": spec.stop,
-        "posterior_std": getattr(ctr, "posterior_std", nan),
+        "posterior_std": ctr.posterior_std,
         "engine_version": engine_version,
         "jax_version": jax_version,
         "timestamp": pd.Timestamp.now().isoformat(),
@@ -145,19 +144,12 @@ def git_short_sha(repo_dir) -> str:
     import subprocess
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(repo_dir),
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, text=True, timeout=10)   # 10 s: git on a warm repo answers in ms; the column is provenance, never worth blocking a run
         sha = out.stdout.strip()
         if out.returncode == 0 and sha:
             dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
                                    cwd=str(repo_dir), capture_output=True, text=True, timeout=10)
             return sha + ("-dirty" if dirty.stdout.strip() else "")
-    except Exception:
+    except Exception:   # no git binary, not a repo, or the timeout: the column records "unknown" rather than aborting the run
         pass
     return "unknown"
-
-
-def isnan(x) -> bool:
-    try:
-        return math.isnan(float(x))
-    except (TypeError, ValueError):
-        return False

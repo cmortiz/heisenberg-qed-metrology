@@ -221,7 +221,7 @@ class Runner:
             rc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, env=self.env_for(pool, slot), cwd=str(REPO)).returncode
         secs = time.time() - t0
         with self.lock:
-            self.joblog.write(f"{job.name}{tag}\t{pool}\t{slot}\t{rc}\t{secs:.1f}\t{job.shard(self.results_dir)}\n")
+            self.joblog.write(f"{job.name}{tag}\t{pool}\t{slot}\t{rc}\t{secs:.1f}\t{job.shard(results_dir or self.results_dir)}\n")
             self.joblog.flush()
         return rc
 
@@ -266,6 +266,8 @@ class Runner:
 
         def warm(gpu: int) -> None:
             for key, job in classes.items():
+                # 20 experiments: enough to trigger every jitted kernel of the adapter and fill the persistent
+                # compilation cache; the shard goes to _warmup and is discarded
                 rc = self.run_job(job, "gpu", gpu, extra=["--max-experiments", "20"], results_dir=tmp, tag=f".warmup_gpu{gpu}")
                 self.log(f"warm-up gpu {gpu} {key}: {'ok' if rc == 0 else f'FAILED rc={rc}'}")
 
@@ -347,8 +349,9 @@ def main(argv=None) -> int:
     n_cfg = {g: len(set(config_key(j.spec) for j in jobs if j.group == g)) for g in groups}
     n_runs = sum(j.n_runs for j in jobs)
     print(f"suite: groups {groups}; seeds {seeds[0]}..{seeds[-1]} ({len(seeds)}); quick={args.quick}")
+    grids = "; ".join(f"sigma={s:g}: {window_N_grid(s)}" for s in WINDOW_SIGMAS)
     print(f"  configs per group: {n_cfg}  total configs {sum(n_cfg.values())} "
-          f"(hwindow counts one config per sigma; its N grid is {window_N_grid(WINDOW_SIGMAS[0])})")
+          f"(hwindow counts one config per sigma; N grids {grids})")
     print(f"  jobs: {len(jobs)} total, {skipped} already have shards, {len(pending)} pending "
           f"({len(gpu_jobs)} GPU pool, {len(cpu_jobs)} CPU pool); rows to produce: {n_runs}")
     print(f"  GPUs: {n_gpus}; gpu slots {args.gpu_slots}; cpu slots {args.cpu_slots}; results {results_dir}")

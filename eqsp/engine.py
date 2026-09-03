@@ -69,8 +69,8 @@ def map_error(logpk, xs, omega_true, period: float):
 @partial(jit, static_argnames=("period",))
 def posterior_stats(logpk, xs, omega_true, period: float):
     """(MAP circular error, posterior circular std) for the truth-free stopping
-    rule.  The std is the root of the posterior second moment of the wrapped
-    displacement from the MAP, d_j = wrap(x_j - x_MAP) in (-period/2, period/2];
+    rule.  The std is the root of the posterior central second moment (variance)
+    of the wrapped displacement from the MAP, d_j = wrap(x_j - x_MAP) in (-period/2, period/2];
     computing it from displacements (not from the resultant length 1 - R, which
     float32 cannot resolve below std ~ 1e-3 period) keeps float32 accurate down
     to std ~ 1e-6 period."""
@@ -102,12 +102,6 @@ class GridCache:
                 self._d.clear()
             self._d[key] = build()
         return self._d[key]
-
-    def clear(self):
-        self._d.clear()
-
-    def __len__(self):
-        return len(self._d)
 
 
 # --------------------------------------------------------------------------
@@ -220,13 +214,13 @@ def run_epsilon(p: BayesianProtocol, eps: float, rng: np.random.Generator) -> Ep
     err = math.nan
     posterior_mode = cfg.stop == "posterior"
     stop_std = 0.5 * eps                          # 95% credible half-width (2 std) <= eps
-    if posterior_mode and hasattr(p, "run_chunk"):
+    if posterior_mode and hasattr(p, "run_chunk"):   # hwindow implements the device-side loop (finding 4); the host loop below is the contract every other adapter fulfils
         return _run_epsilon_device(p, logpk, ctr, omega, threshold, stop_std)
     for i in range(cfg.max_experiments):
         shot = p.draw(i)
         ctr.resources += shot.cost
         ctr.n_rounds = i + 1
-        if shot.key > ctr.M_exec_max:
+        if shot.key > ctr.M_exec_max:                 # executed depth, counted before the rejection test: a rejected shot was still run (cost charged at ed:224)
             ctr.M_exec_max = shot.key
         if shot.rejected:
             ctr.n_rejected += 1

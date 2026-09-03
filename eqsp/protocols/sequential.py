@@ -39,7 +39,6 @@ class Sequential:
             epsilons_k = rng_seed.normal(0.0, spec.sigma, N)             # sq:143
         else:
             epsilons_k = np.zeros(N)
-        self.epsilons_k = epsilons_k
         f_prep = 0.5 * (1.0 - spec.F)
         rows = []
         for eps_target in np.asarray(epsilons, np.float64):

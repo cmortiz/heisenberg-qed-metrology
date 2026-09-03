@@ -18116,6 +18116,16 @@
   "n_rows": null,
   "note": "smallest Converged (%) over the ED-FL table cells"
  },
+ "text.ed.conv_rej_min": {
+  "value": 98.83333333333333,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "ed.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "smallest convergence over the rejection-sampling cells of tab:error-detected-results"
+ },
  "text.fisher_saturation.combined_L1_g0.01_s0.01.mean": {
   "value": 0.9999931776167379,
   "sem": 6.742851184136583e-05,
@@ -18630,7 +18640,7 @@
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "largest |alpha_full - alpha_asymptotic| over bare_adaptive cells (clean configs)"
+  "note": "largest |alpha_full - alpha_asymptotic| over bare_adaptive cells (clean configs, marg excluded)"
  },
  "text.fit.window_shift_max_bare_fixed": {
   "value": 0.07692376177335203,
@@ -18640,17 +18650,17 @@
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "largest |alpha_full - alpha_asymptotic| over bare_fixed cells (clean configs)"
+  "note": "largest |alpha_full - alpha_asymptotic| over bare_fixed cells (clean configs, marg excluded)"
  },
  "text.fit.window_shift_max_combined": {
-  "value": 0.6251735331541184,
+  "value": 0.24233240207613704,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "largest |alpha_full - alpha_asymptotic| over combined cells (clean configs)"
+  "note": "largest |alpha_full - alpha_asymptotic| over combined cells (clean configs, marg excluded)"
  },
  "text.fit.window_shift_max_ed": {
   "value": 0.10859945173926366,
@@ -18660,7 +18670,7 @@
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "largest |alpha_full - alpha_asymptotic| over ed cells (clean configs)"
+  "note": "largest |alpha_full - alpha_asymptotic| over ed cells (clean configs, marg excluded)"
  },
  "text.fit.window_shift_max_sequential": {
   "value": 0.07729519457494016,
@@ -18670,7 +18680,7 @@
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "largest |alpha_full - alpha_asymptotic| over sequential cells (clean configs)"
+  "note": "largest |alpha_full - alpha_asymptotic| over sequential cells (clean configs, marg excluded)"
  },
  "text.logfit.alpha_implied_asymptotic": {
   "value": 1.1478230920010715,
@@ -19279,7 +19289,7 @@
    0.9799107630370549
   ],
   "sem": null,
-  "window": "full",
+  "window": "asymptotic",
   "min_points": null,
   "source_csv": "sequential.csv",
   "n_seeds": null,
@@ -19292,7 +19302,7 @@
    0.9595658316880865
   ],
   "sem": null,
-  "window": "full",
+  "window": "asymptotic",
   "min_points": null,
   "source_csv": "sequential.csv",
   "n_seeds": null,
@@ -19305,7 +19315,7 @@
    1.039242477781898
   ],
   "sem": null,
-  "window": "full",
+  "window": "asymptotic",
   "min_points": null,
   "source_csv": "sequential.csv",
   "n_seeds": null,
@@ -19425,6 +19435,16 @@
   "n_seeds": null,
   "n_rows": null,
   "note": "grid point used for the depth quotes"
+ },
+ "text.sequential.nonconv_error_over_eps_median_s0": {
+  "value": 10.429542198808413,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "median |error|/eps_tar over the non-converged noiseless sequential rows: a wrong bit in some round (error many tolerances wide), not a near miss"
  },
  "text.sequential.visibility_s0.01_eps1e-2": {
   "value": 0.8095716486678869,

@@ -24,10 +24,8 @@ import datetime as dt
 import math
 import os
 import platform
-import re
 import subprocess
 import sys
-import tempfile
 
 import numpy as np
 import pandas as pd
@@ -37,14 +35,14 @@ from eqsp.config import RunSpec, epsilon_grid, grid_resolution  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCRIPTS = os.path.join(REPO, "scripts")
-RUN_PY = os.path.join(SCRIPTS, "run.py")
 COMMITTED = os.path.join(SCRIPTS, "results")
-V2_DIRS = [os.path.join(SCRIPTS, "results", "v2"), os.path.join(REPO, "results", "v2")]
+V2_DIRS = [os.path.join(REPO, "results", "v2"),          # canonical merged v2 CSVs (suite.py --merge)
+           os.path.join(SCRIPTS, "results", "v2")]       # location the plan's Layout section named first; kept as a fallback
 REPORT_DIR = V2_DIRS[0]
 REPORT = os.path.join(REPORT_DIR, "regression_report.md")
 
 EPS_GRID = epsilon_grid()
-TOP3 = [float(e) for e in sorted(EPS_GRID)[-3:]]
+TOP3 = [float(e) for e in sorted(EPS_GRID)[-3:]]     # the three cheapest targets: seconds per cell on the CPU, and the grid m is the full-range one either way
 SEEDS = [1, 2]
 KEY_COLS = ["total_resources", "converged", "final_error"]
 
@@ -85,26 +83,6 @@ def _spec_cli_args(spec: RunSpec):
     return args
 
 
-_HELP_CACHE = {}
-
-
-def _run_py_help():
-    if "help" not in _HELP_CACHE:
-        if not os.path.exists(RUN_PY):
-            _HELP_CACHE["help"] = ""
-        else:
-            r = subprocess.run([sys.executable, RUN_PY, "--help"], capture_output=True, text=True,
-                               cwd=REPO, env={**os.environ, "JAX_PLATFORMS": "cpu"})
-            _HELP_CACHE["help"] = r.stdout + r.stderr
-    return _HELP_CACHE["help"]
-
-
-def _eps_selection_flag():
-    """Flag of run.py that restricts the eps grid, if it advertises one."""
-    help_text = _run_py_help()
-    m = re.search(r"(--eps-(?:idx|index|indices|subset|only|select|top|list|values?))\b", help_text)
-    return m.group(1) if m else None
-
 
 def _committed_rows(csv_name, match, seed, eps_list):
     df = pd.read_csv(os.path.join(COMMITTED, csv_name))
@@ -120,28 +98,9 @@ def _committed_rows(csv_name, match, seed, eps_list):
     return out
 
 
-def _rows_via_subprocess(spec, seed, eps_list, flag):
-    with tempfile.TemporaryDirectory() as td:
-        out = os.path.join(td, "out.csv")
-        idx = [int(np.argmin(np.abs(EPS_GRID - e))) for e in eps_list]
-        cmd = [sys.executable, RUN_PY, spec.protocol, "--seed", str(seed), *_spec_cli_args(spec),
-               "--device", "cpu", "--out", out, "--quiet", flag, ",".join(str(i) for i in idx)]
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO,
-                           env={**os.environ, "JAX_PLATFORMS": "cpu"}, timeout=1800)
-        if r.returncode != 0 or not os.path.exists(out):
-            return None, f"run.py failed (rc={r.returncode}): {r.stderr[-800:]}"
-        df = pd.read_csv(out)
-        rows = {}
-        for eps in eps_list:
-            sub = df[np.isclose(df.epsilon, eps, rtol=1e-9, atol=0)]
-            if len(sub):
-                rows[eps] = sub.iloc[-1]
-        return rows, "subprocess run.py " + " ".join(cmd[2:])
-
-
 def _rows_in_process(spec, seed, eps_list):
-    """Fallback: drive the adapter with the engine loop directly (same per-eps
-    path run.py takes)."""
+    """Drive the adapter with the engine loop directly: the same per-eps path
+    run.py takes, without a subprocess (run.py has no eps-subset flag)."""
     protocols = pytest.importorskip("eqsp.protocols")
     eio = pytest.importorskip("eqsp.io")
     p = protocols.get_protocol(spec, "cpu")
@@ -176,7 +135,7 @@ def _compare(v1, v2):
     out["total_resources"] = int(v1["total_resources"]) == int(v2["total_resources"])
     out["converged"] = bool(v1["converged"]) == bool(v2["converged"])
     e1, e2 = float(v1["final_error"]), float(v2["final_error"])
-    out["final_error"] = math.isclose(e1, e2, rel_tol=1e-9, abs_tol=1e-12)
+    out["final_error"] = math.isclose(e1, e2, rel_tol=1e-9, abs_tol=1e-12)   # the CSVs store %.10e: equality at the file's own resolution
     return out
 
 
@@ -228,13 +187,7 @@ def _write_report(sections):
 # tiers
 # --------------------------------------------------------------------------
 def exact_tier(cells=CELLS, seeds=SEEDS, eps_list=TOP3):
-    flag = _eps_selection_flag()
-    lines = ["## Exact tier", ""]
-    if flag:
-        lines.append(f"runner: `scripts/run.py` via subprocess (CPU), eps restricted with `{flag}`")
-    else:
-        lines.append("runner: in-process `engine.run_epsilon` (run.py advertises no eps-selection flag, or does not exist yet); "
-                     "same per-eps code path as run.py")
+    lines = ["## Exact tier", "", "runner: in-process `engine.run_epsilon` (same per-eps code path as run.py)"]
     lines += ["", "| cell | seed | eps | v1 T | v2 T | v1 conv | v2 conv | v1 err | v2 err | match (T, conv, err) |",
               "|---|---|---|---|---|---|---|---|---|---|"]
     n_pairs = n_match = 0
@@ -246,13 +199,7 @@ def exact_tier(cells=CELLS, seeds=SEEDS, eps_list=TOP3):
                 notes.append(f"- {name} seed {seed}: no committed rows at the requested eps")
                 continue
             try:
-                if flag and os.path.exists(RUN_PY):
-                    v2, how = _rows_via_subprocess(spec, seed, eps_list, flag)
-                    if v2 is None:
-                        notes.append(f"- {name} seed {seed}: {how}; falling back to in-process")
-                        v2, how = _rows_in_process(spec, seed, eps_list)
-                else:
-                    v2, how = _rows_in_process(spec, seed, eps_list)
+                v2, how = _rows_in_process(spec, seed, eps_list)
             except Exception as exc:  # adapter missing or interface mismatch: record, do not fail
                 notes.append(f"- {name} seed {seed}: [BLOCKED: {type(exc).__name__}: {str(exc)[:200]}]")
                 continue
@@ -309,7 +256,9 @@ def statistical_tier(v2_dirs=V2_DIRS, cells=CELLS):
         two_sigma = 2 * math.sqrt(np.nan_to_num(s1["sem"]) ** 2 + np.nan_to_num(s2["sem"]) ** 2)
         dconv = s2["conv_frac"] - s1["conv_frac"]
         flag = []
-        if abs(delta) > two_sigma:
+        if np.isnan(s1["sem"]) or np.isnan(s2["sem"]):
+            flag.append("sem-undefined")                      # a side with < 2 retained seeds cannot be tested at 2 sigma
+        elif abs(delta) > two_sigma:
             flag.append("alpha")
         if abs(dconv) > 0.02:
             flag.append("conv")
@@ -357,13 +306,7 @@ def test_sequential_reproduces_committed_rows_exactly():
     name, spec, csv_name, match = CELLS[-1]
     v1 = _committed_rows(csv_name, match, 1, TOP3)
     assert len(v1) == 3, "committed sequential.csv lacks seed 1 rows at the 3 largest eps"
-    flag = _eps_selection_flag()
-    if flag and os.path.exists(RUN_PY):
-        v2, how = _rows_via_subprocess(spec, 1, TOP3, flag)
-        if v2 is None:
-            v2, how = _rows_in_process(spec, 1, TOP3)
-    else:
-        v2, how = _rows_in_process(spec, 1, TOP3)
+    v2, how = _rows_in_process(spec, 1, TOP3)
     for eps in TOP3:
         assert eps in v2, (how, eps)
         cmp = _compare(v1[eps], v2[eps])

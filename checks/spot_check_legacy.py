@@ -1,5 +1,10 @@
-"""Verification 3: exact-tier spot check of the v2 engine against the committed
-legacy CSVs (scripts/results/*.csv), seed 1, model="theorem", q=0, k=1, F=1.
+"""Verification 3 of the plan (full suite before the paper is filled): exact-tier
+spot check of the v2 engine against the committed legacy CSVs
+(scripts/results/*.csv), seed 1, model="theorem", q=0, k=1, F=1.  Scratch script:
+prints a per-cell table and exits 1 if any sequential row differs (the JAX rows
+are reported, not gated: the CSVs were GPU runs).  tests/test_regression.py is
+the pytest form of the same check at gamma = 0.01; this script takes gamma = 0.05
+so that between them two legacy cells per protocol are covered.
 
 JAX protocols: 3 largest eps, grid m taken from the full legacy eps range
 (bh:50-55) so the grid matches the legacy run.  Sequential: all 60 eps, all 9
@@ -26,7 +31,8 @@ SEED = 1
 EPS_ALL = epsilon_grid()
 EPS3 = EPS_ALL[-3:]
 RES = os.path.join(REPO, "scripts", "results")
-pd.set_option("display.width", 250)
+ENGINE_VERSION, JAX_VERSION = "spot", "cpu"      # provenance columns of the rows produced here (never written to a CSV)
+pd.set_option("display.width", 250)   # wide enough for the 9-column comparison table on one line
 
 
 def legacy_rows(csv, **filt):
@@ -44,7 +50,7 @@ def run_jax(spec, eps_list):
     rows = []
     for eps in eps_list:
         res = engine.run_epsilon(p, float(eps), p.rng_for(SEED, float(eps)))
-        rows.append(make_row(spec, SEED, float(eps), res, "spot", "cpu"))
+        rows.append(make_row(spec, SEED, float(eps), res, ENGINE_VERSION, JAX_VERSION))
     return pd.DataFrame(rows)
 
 
@@ -103,7 +109,7 @@ bad += compare("combined fl g=0.05 L=1 s=0.01 vs combined_full_likelihood.csv",
 for L in (1, 2, 3):
     for sigma in (0.0, 0.01, 0.05):
         spec = RunSpec("sequential", L=L, sigma=sigma, model="theorem", stop="legacy")
-        new = pd.DataFrame(Sequential(spec).run_seed(SEED, EPS_ALL, "spot"))
+        new = pd.DataFrame(Sequential(spec).run_seed(SEED, EPS_ALL, ENGINE_VERSION))
         leg = legacy_rows("sequential.csv", L=L, sigma_epsilon=sigma)
         cols = C_BASE + [("M_max", "M_max_used")]
         n_bad = 0

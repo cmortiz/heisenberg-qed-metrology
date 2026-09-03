@@ -9,6 +9,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-# Keep every JAX-backed test on the CPU and single-threaded; the regression
-# harness spawns its own subprocesses with the same setting.
+# Keep every JAX-backed test on the CPU (setdefault: an explicit JAX_PLATFORMS in the
+# environment wins).  tests/test_regression.py passes the same variable to the run.py
+# subprocesses it spawns.
 os.environ.setdefault("JAX_PLATFORMS", "cpu")

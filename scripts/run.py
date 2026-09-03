@@ -3,7 +3,7 @@
 
   run.py PROTOCOL (--seed S | --seeds 1-40) [--gamma] [--h] [--L] [--sigma-eps]
          [--inference ps|fl] [--marg] [--marg-cap] [--q] [--k] [--F] [--estimator mismatched|aware]
-         [--model exact|theorem] [--extended] [--eps-tar] [--N-grid auto|N1,N2,...]
+         [--model exact|theorem] [--stop posterior|legacy] [--extended] [--eps-tar] [--N-grid auto|N1,N2,...]
          [--out FILE | --results-dir DIR] [--device auto|cpu|gpu] [--max-experiments N] [--quiet]
 
 Default output: one shard per (protocol, config, seed) at
@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--out", type=str, default=None, help="append all rows to this CSV instead of per-seed shards")
     ap.add_argument("--results-dir", type=str, default=str(DEFAULT_RESULTS_DIR))
     ap.add_argument("--device", choices=["auto", "cpu", "gpu"], default="auto")
-    ap.add_argument("--max-experiments", type=int, default=None, help="override the protocol's max_experiments (tests)")
+    ap.add_argument("--max-experiments", type=int, default=None, help="override the protocol's max_experiments (suite warm-up and tests)")
     ap.add_argument("--quiet", action="store_true")
     return ap
 
@@ -111,7 +111,7 @@ def main(argv=None) -> int:
         n_conv += c
         log(f"  seed {seed}: {c}/{len(rows)} converged, {time.time() - t0:.1f}s -> {out_path(seed)}")
 
-    log(f"run.py {spec.protocol} mode={spec.mode_label()} seeds={seeds[0]}..{seeds[-1]} ({len(seeds)}) "
+    log(f"run.py {spec.protocol} mode={spec.mode_label()} seeds={','.join(map(str, seeds)) if len(seeds) <= 8 else f'{seeds[0]}..{seeds[-1]}'} ({len(seeds)}) "
         f"gamma={spec.gamma} h={spec.h} L={spec.L} sigma={spec.sigma} q={spec.q} k={spec.k} F={spec.F} "
         f"estimator={spec.estimator} model={spec.model} engine={engine_version}")
 

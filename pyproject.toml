@@ -1,6 +1,6 @@
 [project]
 name = "eqsp-numerics"
-version = "2.0.0"
+version = "2.0.0"   # 2 = the results/v2 suite (engine rewrite of 2026-09-02); the v1 scripts live at git tag v1-jax-suite
 description = "Bayesian phase-estimation numerics for Encoded Quantum Signal Processing (EQSP)"
 requires-python = ">=3.12,<3.13"
 dependencies = [

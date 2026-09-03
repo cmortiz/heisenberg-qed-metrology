@@ -6,8 +6,10 @@ the realized offset sum and theta_i ~ U[0, 2pi) a per-shot readout phase.
 Inference: (1 + lambda_N cos(2 N omega - theta_i))/2, lambda_N = e^{-2 N sigma^2}
 (sensing.tex:1305, :1335).  Grid on one period [0, pi/N) with the truth wrapped
 and period-pi/N circular error; RNG stream_rng(seed, eps_tar, N) with draw order
-S, thetas, uniforms.  Convergence is checked after every shot (T(N) resolution;
-a coarser cadence would quantise T near the resource minimum at N*/2).
+S, thetas, uniforms.  Under the posterior stop the device-side loop checks the
+stopping rule after every update (T(N) resolution; a coarser cadence would
+quantise T near the resource minimum at N*/2); the legacy host loop
+(``--stop legacy``) checks every 10 shots.
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ from jax import lax
 
 from .. import closed_forms as cf
 from .. import hamiltonian as H
-from ..config import OMEGA_TRUE, EngineConfig, RunSpec, window_N_grid  # noqa: F401 (re-exported)
+from ..config import OMEGA_TRUE, EngineConfig, RunSpec
 from ..engine import Shot, check_due, make_grid, posterior_stats
 from ..io import stream_rng
 
@@ -65,8 +67,9 @@ class HWindow:
         self.cfg = EngineConfig(stop=spec.stop, max_experiments=2_000_000, check_every=10, check_counter="round0")
         # The prior is one period pi/N wide and the error is period-pi/N circular, so a
         # target with 1.2 eps_tar comparable to pi/(2N) converges trivially.  Require a
-        # factor 20 between period and tolerance (chupacabras quick run 2026-09-02 showed
-        # 100% "convergence" after ~1 shot at eps_tar = 1e-3, N = 800).
+        # factor 20 between period and tolerance: the suite's eps_tar = 2e-2/N_* (suite.py WINDOW_EPS) gives
+        # pi/N / (1.2 eps_tar) = 33 at the largest N = 4 N_*, so every suite point passes; the chupacabras quick
+        # run of 2026-09-02 at eps_tar = 1e-3, N = 800 (ratio 3.3) showed 100% "convergence" after ~1 shot.
         if math.pi / spec.N_fixed < 20.0 * self.cfg.tolerance * spec.eps_tar:
             raise ValueError(f"hwindow: period pi/N = {math.pi/spec.N_fixed:.3g} is not >> tolerance "
                              f"{self.cfg.tolerance*spec.eps_tar:.3g} at N = {spec.N_fixed}; lower eps_tar")

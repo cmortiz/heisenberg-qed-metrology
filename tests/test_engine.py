@@ -26,11 +26,8 @@ def _logsumexp64(x):
 
 
 def _ctr(res):
-    """Counters object from an EpsResult, whichever attribute carries it."""
-    for name in ("ctr", "counters", "counter"):
-        if hasattr(res, name):
-            return getattr(res, name)
-    return res
+    """Counters of an EpsResult (engine.EpsResult.ctr)."""
+    return res.ctr
 
 
 # --------------------------------------------------------------------------
@@ -219,7 +216,7 @@ def _run(p, eps=1e-2, seed=0):
 def test_run_epsilon_converges_at_first_check_and_posterior_is_float32():
     p = ToyProtocol(_cfg(), m=12)
     res = _run(p)
-    assert res.converged is True or res.converged == 1
+    assert res.converged is True
     assert float(res.error) < 1.2 * 1e-2
     ctr = _ctr(res)
     assert ctr.n_rounds == 1 and ctr.n_updates == 1 and ctr.resources == 7
@@ -335,7 +332,10 @@ def _gauss_logpk(xs, center, std, period):
 @pytest.mark.parametrize("std", [3e-2, 1e-3, 5e-5])
 def test_posterior_stats_recovers_gaussian_std_and_map_error(std):
     """Circular std from wrapped displacements stays accurate in float32 down to
-    std ~ 1e-5 rad (the resultant-length route, 1 - R, cannot resolve these)."""
+    std = 5e-5 rad, i.e. 8 grid points at m = 20 (the resultant-length route,
+    1 - R = 2 sin^2(std/2) ~ 1e-9, is below float32 resolution there).  The MAP is
+    placed 4 std off the truth so that err and std are checked independently; 2%
+    on std is the discretisation error of an 8-point-wide Gaussian."""
     m = 20
     period = 2 * math.pi
     xs = engine.make_grid(m, period, "np64")
@@ -363,7 +363,9 @@ class GaussToy(ToyProtocol):
 def test_posterior_rule_ignores_lucky_map_hits_while_posterior_is_wide():
     """MAP sits exactly on the truth from the first update, but the posterior is
     10x wider than the target: the legacy rule stops at once, the posterior rule
-    waits until 2 std <= eps."""
+    waits until 2 std <= eps (engine.run_epsilon, stop_std: the 95% credible
+    half-width of a Gaussian is 1.96 std, rounded to 2).  The widths list puts the
+    decisive update at exact equality (2 * 0.5 eps = eps) to pin the <= in the rule."""
     eps = 1e-3
     widths = [10 * eps, 5 * eps, 2 * eps, eps, 0.5 * eps, 0.1 * eps]
     legacy = GaussToy(_cfg(max_experiments=10), m=18, widths=widths)

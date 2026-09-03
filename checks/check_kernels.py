@@ -72,12 +72,18 @@ def tol32(N, M, base=1e-5):
     return 1e-9 if X64 else base * max(1, N) * max(1, M)
 
 
-OMEGA = 0.3
-G = 4096
+OMEGA = 0.3                     # the suite's truth (config.OMEGA_TRUE)
+G = 4096                        # 2^12 grid points: every kernel is elementwise in omega, so a coarse grid covers the full period as well as m = 20 does
 grid = np.linspace(0, 2 * np.pi, G, endpoint=False, dtype=np.float64)
 grid32 = jf(grid)
 prior = jnp.full(G, -np.log(G), dtype=DT)
-rng = np.random.default_rng(12345)
+rng = np.random.default_rng(12345)   # fixed seed so a reported failure reproduces
+
+# Tolerances.  float32 kernels: tol32(N, M, base) = base * N * M scales the float32 unit round-off
+# (6e-8) by the M-fold and N-fold products the kernel forms; the per-check bases (2e-6, 4e-6, 2e-7)
+# were set at the largest observed error times ~3 when the kernels were admitted (2026-09-02), so
+# a regression of one bit-level operation is visible.  float64 closed-form identities: 1e-13 to
+# 1e-15 (hundreds of ulp), 1e-10 to 1e-12 for sums with many terms.
 
 # ==========================================================================
 print("\n=== A. bare_fixed kernels (bh:58-124) vs closed_forms.bare_parity ===")
@@ -424,7 +430,7 @@ if not X64:
     # chained posterior
     la = lb = logpk0
     n_bad = 0
-    for step in range(300):
+    for step in range(300):           # 300 chained updates: enough for a single differing bit to propagate into the normalisation
         n = int(rng.integers(1, 16385)); outcome = int(rng.integers(0, 2))
         la = ghz_bayesian_update(la, j_grid, gammas0, n, outcome, Gb)
         lb = H.bare_adaptive_update(lb, q0, q1, q2, logr, logC, n, 0.0, 0.0, outcome)
@@ -440,6 +446,7 @@ if not X64:
                 post = np.exp(np.asarray(H.bare_adaptive_update(logpk0, q0g, q1g, q2g, logrg, logCg, n, 0.0, 0.0, outcome)))
                 ref = cf.bare_parity_prob(xs_pi, gamma, 1, n, outcome)
                 if ref.max() < 1e-12:
+                    print(f"      skip E3 g={gamma} n={n} v={outcome}: likelihood below 1e-12 everywhere (visibility underflow), posterior undefined")
                     continue
                 rec(f"E3 bare_adaptive_update g={gamma} n={n} v={outcome} vs bare_parity_prob", post_err(post, ref), 2e-5)
         # aware visibilities: readout on the whole parity, prep on the coherent term only (even n has C^n)
@@ -469,6 +476,7 @@ for N, sigma in itertools.product([12, 200, 800], [0.05, 0.1]):
         post = np.exp(np.asarray(H.hwindow_update(prior0, xsN32, N, jf(-2 * N * sigma**2), jf(theta), outcome)))
         ref = cf.hwindow_prob(xsN, N, sigma, theta, outcome)
         if ref.max() < 1e-12:
+            print(f"      skip F1 N={N} s={sigma} theta={theta} v={outcome}: likelihood below 1e-12 everywhere")
             continue
         rec(f"F1 hwindow_update N={N} s={sigma} theta={theta} v={outcome}", post_err(post, ref), tol32(1, 2 * N, 2e-7))
 

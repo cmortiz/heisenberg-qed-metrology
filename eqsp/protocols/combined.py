@@ -217,9 +217,7 @@ class Combined:
         else:
             pb = pattern.reshape(N_BLOCKS, self.Nc)
             Xn = np.stack([pb, ~pb], axis=1).astype(np.float32)          # (B, 2, Nc): E_b and complement
-            logw_np = np.zeros((N_BLOCKS, 2), np.float32)
-            if self.theorem:
-                logw_np[:, 1] = -np.inf                                  # theorem + q>0 mismatched: one coset member
+            logw_np = np.zeros((N_BLOCKS, 2), np.float32)                # exact model (theorem + mismatched returned above): both coset members
             X = jnp.asarray(Xn)
             logw = jnp.asarray(logw_np)
         marg_coef = 2.0 * (M_evol ** 2) * (self.sigma ** 2) if self.marg else 0.0

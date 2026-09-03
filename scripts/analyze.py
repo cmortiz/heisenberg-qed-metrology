@@ -48,14 +48,17 @@ V1_FILES = {
     "sequential": ("sequential", "sequential"),
 }
 PROTOCOLS = ["bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow"]   # v2 files: results/v2/<protocol>.csv
-# sentinel for group keys that a protocol does not use (NaN keys would drop rows in groupby)
+# sentinel for group keys that a protocol does not use (NaN keys would drop rows in groupby).  The
+# sentinels are the "absent" value of each parameter (no noise, no offsets, no readout or prep error,
+# the default estimator); v1 CSVs carry no model/stop_rule column and were produced by the legacy
+# kernels and the legacy truth-based stop, hence "legacy".  Every v2 row writes every key itself.
 KEY_FILL = {"gamma": 0.0, "h": 0.0, "sigma_epsilon": 0.0, "L": 0, "q": 0.0, "k": 1.0, "F": 1.0,
             "estimator": "mismatched", "model": "legacy", "stop_rule": "legacy"}
-TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]
+TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]   # tab:prefactor-results rows (v1 paper layout kept by plan P3); text.prefactor.* ranges run over the same rows
 FIG1_BARE_GAMMAS = [0.01, 0.05, 0.10]
 FIG3_CELLS = [(1, 0.01, 0.01), (1, 0.10, 0.01), (2, 0.10, 0.01)]
 WEAK_NOISE_P = [0.01, 0.05, 0.10]
-SEQ_EPS_QUOTE = 1e-2
+SEQ_EPS_QUOTE = 1e-2   # target at which the sequential depth is quoted (plan P5: "deepest executed round depth per eps"); the asymptotic-window edge
 COMBINED_TABLE_SIGMAS = [0.01, 0.05]   # tab:combined-results cells; the v1 CSV also holds the cut sigma scan
 
 
@@ -105,7 +108,7 @@ def normalize(df: pd.DataFrame) -> pd.DataFrame:
     df["L"] = df["L"].astype(int)
     df["converged"] = fit.coerce_converged(df["converged"])
     dedupe_keys = GROUP_KEYS + ["seed", "epsilon"] + (["N"] if "N" in df.columns else [])
-    df["N"] = df["N"].fillna(-1)
+    df["N"] = df["N"].fillna(-1)   # -1 = "not a per-N cell" (only hwindow varies N inside a cell); keeps N usable as a dedupe key
     before = len(df)
     df = df.drop_duplicates(subset=dedupe_keys, keep="last").reset_index(drop=True)
     df.attrs["n_duplicates_dropped"] = before - len(df)
@@ -182,7 +185,9 @@ def fisher_saturation(df: pd.DataFrame) -> pd.DataFrame:
     for keys, g in sub.groupby(GROUP_KEYS, sort=True):
         row = dict(zip(GROUP_KEYS, keys))
         N = int(g["N_total"].iloc[0]) if row["protocol"] == "combined" else int(g["N_code"].iloc[0])
-        correction = max(1.0 - (row["gamma"] / OMEGA_TRUE) ** 2, 1e-12)
+        if row["gamma"] >= OMEGA_TRUE:   # the 1 - gamma^2/omega^2 ceiling is not defined here (v1 pilot gammas 0.30, 0.45); no v2 cell
+            continue
+        correction = 1.0 - (row["gamma"] / OMEGA_TRUE) ** 2
         ratio = g["sum_F_obs"] / (g["sum_M_sq"] * 4.0 * N**2 * correction)
         asym = g.assign(ratio=ratio)[g["epsilon"] < fit.EPS_ASYMPTOTIC]
         seed_means = asym.groupby("seed")["ratio"].mean()
@@ -259,8 +264,11 @@ def add_bundle(nums: dict, prefix: str, bundle: dict) -> None:
 def pick(cells: pd.DataFrame, **cond) -> pd.Series | None:
     mask = np.ones(len(cells), dtype=bool)
     for col, val in cond.items():
+        # floats round-trip through the CSV at %.10e, so isclose (rtol 1e-5) only absorbs that formatting
         mask &= np.isclose(cells[col], val) if isinstance(val, (int, float)) else (cells[col] == val).to_numpy()
     hit = cells[mask]
+    if len(hit) > 1:
+        raise ValueError(f"pick: {len(hit)} cells match {cond}; the cell table must be unique on the grouping keys")
     return hit.iloc[0] if len(hit) == 1 else None
 
 
@@ -390,7 +398,8 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
     else:
         m_exec = float(sequential_schedule_depth(eps_q))
         note = (f"v1 fallback: no M_exec_max column; deepest depth of the deterministic schedule "
-                f"M_r = ceil((pi/2)/W_r), W_r = pi/2^r, replayed at eps_tar = {eps_q:.6g} (simulation_sequential.py:76-84)")
+                f"M_r = ceil((pi/2)/W_r) with W_0 = pi and W_r = pi/2^r (depth evaluated before the halving), "
+                f"replayed at eps_tar = {eps_q:.6g} (simulation_sequential.py:76-84)")
     nums["text.sequential.M_exec_max_eps1e-2"] = scalar_entry(m_exec, src, note)
     if "M_max_used" in at.columns and at["M_max_used"].notna().any():
         nums["text.sequential.M_max_used_eps1e-2"] = scalar_entry(
@@ -411,10 +420,16 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
         nums[f"text.sequential.alpha_full_{tag}"] = range_entry(rows["alpha_full"], rows["source_csv"].iloc[0],
                                                                 f"[min, max] over L of the full-range alpha at sigma = {s:g}", window="full")
         nums[f"text.sequential.alpha_asym_{tag}_range"] = range_entry(rows["alpha_asymptotic"], rows["source_csv"].iloc[0],
-                                                                f"[min, max] over L of the asymptotic-window alpha at sigma = {s:g}", window="full")
+                                                                f"[min, max] over L of the asymptotic-window alpha at sigma = {s:g}", window="asymptotic")
         nums[f"text.sequential.conv_{tag}_range"] = range_entry(rows["converged_pct"], rows["source_csv"].iloc[0],
                                                                 f"[min, max] over L of Converged (%) at sigma = {s:g}")
 
+    nc = seq[np.isclose(seq["sigma_epsilon"], 0.0) & ~seq["converged"]]
+    if len(nc):
+        nums["text.sequential.nonconv_error_over_eps_median_s0"] = scalar_entry(
+            float((nc["final_error"] / nc["epsilon"]).median()), src,
+            "median |error|/eps_tar over the non-converged noiseless sequential rows: a wrong bit in some round "
+            "(error many tolerances wide), not a near miss")
     # The binary-search cost schedule is deterministic: T at fixed eps_tar varies by less than
     # a fraction of a percent across seeds and not at all with sigma_epsilon, so the exponent can
     # be fitted on all 60 targets.  The sigma-dependence of the converged-row fit in
@@ -428,7 +443,7 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
         if m.sum() >= fit.WINDOWS["asymptotic"][1]:
             sched_asym.append(fit.fit_seed(e_all[m], T_all[m])[0])
         per_eps = cell.groupby("epsilon")["total_resources"].agg(["min", "max"])
-        spread.append(float(((per_eps["max"] - per_eps["min"]) / per_eps["max"]).max()))
+        spread.append(float(((per_eps["max"] - per_eps["min"]) / per_eps["max"]).max()))   # relative to the largest cost: the conservative (smallest) normaliser
     nums["text.sequential.alpha_schedule_range"] = range_entry(
         pd.Series(sched_full), src, "[min, max] over all (L, sigma_epsilon) cells of the full-range alpha fitted "
         "on the seed-mean cost at all 60 targets, converged or not (the schedule is deterministic)", window="full")
@@ -480,7 +495,7 @@ def numbers_marg(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> None:
         # the same fit restricted to targets where the cell still converges on most seeds
         ok = [e for e, sd in cell.groupby("epsilon") if fit.coerce_converged(sd["converged"]).mean() >= 0.9]
         gg = conv[conv["epsilon"].isin(ok) & (conv["epsilon"] < floor)].groupby("epsilon")["total_resources"].mean()
-        if len(gg) >= fit.WINDOWS["asymptotic"][1]:
+        if len(gg) >= fit.WINDOWS["asymptotic"][1]:   # same retention rule as the asymptotic window (5 targets), the floor sits inside it
             nums[f"text.marg.alpha_below_floor_converged_{tag}"] = scalar_entry(
                 fit.fit_seed(gg.index.to_numpy(float), gg.to_numpy(float))[0], src,
                 f"alpha of the {tag} cell below the noise floor, restricted to targets that converge on at least "
@@ -523,7 +538,7 @@ def numbers_hwindow(hw: pd.DataFrame, nums: dict) -> None:
         src = g["source_csv"].iloc[0]
         nums[f"{p}.N_star"] = scalar_entry(1.0 / (2.0 * sigma**2), None, "Fisher-information peak N* = 1/(2 sigma^2)")
         nums[f"{p}.N_star_half"] = scalar_entry(1.0 / (4.0 * sigma**2), None, "predicted T(N) minimum N*/2 = 1/(4 sigma^2)")
-        ok = g[(g["converged_pct"] >= 50.0) & g["T_mean"].notna()]
+        ok = g[(g["converged_pct"] >= 50.0) & g["T_mean"].notna()]   # a T minimum is read only where the median seed converged (T_median defined)
         if len(ok):
             nums[f"{p}.N_argmin"] = scalar_entry(int(ok.loc[ok["T_mean"].idxmin(), "N"]), src, "sampled N minimizing mean T over converged seeds (cells with >= 50% convergence)")
             nums[f"{p}.N_argmin_median"] = scalar_entry(int(ok.loc[ok["T_median"].idxmin(), "N"]), src, "sampled N minimizing median T over converged seeds (cells with >= 50% convergence)")
@@ -570,7 +585,7 @@ def numbers_logfit(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> None:
     """Heisenberg-with-log-overhead keys: implied exponents of a pure eps^-1 ln(1/eps) law on the target grid,
     and residual ranges of the linear-in-ln(1/eps) model versus a power law for the headline cells."""
     eps = np.sort(df.loc[df["protocol"] != "hwindow", "epsilon"].unique())
-    if len(eps) >= 10:
+    if len(eps) >= fit.WINDOWS["full"][1]:   # the implied exponent is a full-window fit, so the same retention rule applies
         for w in ("full", "asymptotic"):
             nums[f"text.logfit.alpha_implied_{w}"] = scalar_entry(
                 fit.alpha_implied_by_log_law(eps, w), None,
@@ -627,6 +642,8 @@ def numbers_text_extras(cells: pd.DataFrame, nums: dict) -> None:
         nums["text.ed.conv_edfl_min"] = scalar_entry(ed_fl["converged_pct"].min(), ed_fl["source_csv"].iloc[0],
                                                      "smallest Converged (%) over the ED-FL table cells")
     if not ed_rej.empty:
+        nums["text.ed.conv_rej_min"] = scalar_entry(ed_rej["converged_pct"].min(), ed_rej["source_csv"].iloc[0],
+                                                     "smallest convergence over the rejection-sampling cells of tab:error-detected-results")
         nums["text.ed.alpha_asym_rej_range"] = range_entry(ed_rej["alpha_asymptotic"], ed_rej["source_csv"].iloc[0],
                                                           "[min, max] asymptotic alpha over the ED rejection-sampling table cells", window="asymptotic")
     ed_all = pd.concat([ed_fl, ed_rej])
@@ -657,8 +674,9 @@ def numbers_shift(cells: pd.DataFrame, nums: dict) -> None:
             abs(worst["shift_full_minus_asym"]), worst["source_csv"],
             f"largest |alpha_full - alpha_asymptotic| over the ED and combined (ED-FL and rejection) cells; attained at "
             f"{worst['mode']} L={worst['L']} gamma={worst['gamma']} sigma={worst['sigma_epsilon']}")
-    for proto, g in cc.groupby("protocol"):
-        nums[f"text.fit.window_shift_max_{proto}"] = scalar_entry(g["shift_full_minus_asym"].abs().max(), None, f"largest |alpha_full - alpha_asymptotic| over {proto} cells (clean configs)")
+    pl = cc[~cc["mode"].str.startswith("combined_full_likelihood_marg")]   # marg cells are not power-law cells (finding 12)
+    for proto, g in pl.groupby("protocol"):
+        nums[f"text.fit.window_shift_max_{proto}"] = scalar_entry(g["shift_full_minus_asym"].abs().max(), None, f"largest |alpha_full - alpha_asymptotic| over {proto} cells (clean configs, marg excluded)")
 
 
 def build_numbers(cells, hw, fs, df) -> dict:
@@ -681,8 +699,14 @@ def build_numbers(cells, hw, fs, df) -> dict:
 
 
 # --------------------------------------------------------------------------- LaTeX rows
-def pm(a, s, nd):
-    return "--" if a is None or np.isnan(a) else f"${a:.{nd}f} \\pm {s:.{nd}f}$"
+def pm(a, s, nd=None):
+    """alpha +/- SEM.  Three decimals when the SEM is below 0.005, else two: the rule paper_numbers.fmt applies to
+    inline exponents, so a table cell and the text quoting it round identically."""
+    if a is None or np.isnan(a):
+        return "--"
+    if nd is None:
+        nd = 3 if (s is not None and not np.isnan(s) and s < 0.005) else 2
+    return f"${a:.{nd}f} \\pm {s:.{nd}f}$"
 
 
 def pct(x, nd=0, gt99=False):
@@ -720,15 +744,17 @@ def midrule_groups(rows_by_group: dict[object, list[str]]) -> list[str]:
 def table_prefactor(cells, outdir):
     cc = clean_cells(cells)
     groups: dict[int, list[str]] = {}
-    for _, bare in cc[cc["protocol"] == "bare_fixed"].sort_values(["L", "gamma"]).iterrows():
-        L, g = int(bare["L"]), float(bare["gamma"])
+    for L, g in TAB_PREFACTOR_ROWS:   # the paper's five rows; the other (L, gamma) cells stay in derived/cells.csv
+        bare = pick(cc, protocol="bare_fixed", L=L, gamma=g)
+        if bare is None:
+            continue
         edfl = pick(cc, protocol="ed", mode="ed_full_likelihood", L=L, gamma=g)
         rej = pick(cc, protocol="ed", mode="ed_postselect", L=L, gamma=g)
         if edfl is None or rej is None:
             continue
         groups.setdefault(L, []).append(
-            f"$L{{=}}{L}$, $\\gamma_{{\\mathrm{{Ham}}}} = {g:.2f}$ & ${bare['C']:.0f}$ & $\\mathbf{{{edfl['C']:.0f}}}$ & ${rej['C']:.0f}$ & ${sig2(edfl['C'] / bare['C'])}$ \\\\")
-    write_rows(outdir / "tab_prefactor.tex", "Configuration & Bare GHZ & ED-FL & Rejection sampling & ED-FL/bare  (C = geometric mean of T*eps over converged rows, full range)", midrule_groups(groups))
+            f"$L{{=}}{L}$, $\\gamma = {g:.2f}$ & ${bare['C']:.0f}$ & $\\mathbf{{{edfl['C']:.0f}}}$ & ${rej['C']:.0f}$ & ${sig2(edfl['C'] / bare['C'])}$ \\\\")
+    write_rows(outdir / "tab_prefactor.tex", "Configuration & Bare GHZ & ED-FL & Rejection sampling & ED-FL/bare  (C = geometric mean of T*eps over converged rows, full range; rows = TAB_PREFACTOR_ROWS)", midrule_groups(groups))
 
 
 def table_ed(cells, outdir):
@@ -740,8 +766,8 @@ def table_ed(cells, outdir):
         if edfl is None or rej is None:
             continue
         groups.setdefault(int(L), []).append(
-            f"$L{{=}}{int(L)}$, {gamma_pct_label(g)} & {pm(edfl['alpha_asymptotic'], edfl['sem_asymptotic'], 2)} & {pct(edfl['converged_pct'])} & "
-            f"{pm(rej['alpha_asymptotic'], rej['sem_asymptotic'], 2)} & {pct(rej['converged_pct'])} & {pct(rej['accept_pct'], gt99=True)} \\\\")
+            f"$L{{=}}{int(L)}$, {gamma_pct_label(g)} & {pm(edfl['alpha_asymptotic'], edfl['sem_asymptotic'])} & {pct(edfl['converged_pct'])} & "
+            f"{pm(rej['alpha_asymptotic'], rej['sem_asymptotic'])} & {pct(rej['converged_pct'])} & {pct(rej['accept_pct'], gt99=True)} \\\\")
     write_rows(outdir / "tab_error_detected.tex", "Configuration & ED-FL alpha & Converged (%) & Rejection alpha & Converged (%) & Accept. (%)  (asymptotic window eps < 1e-2, min_points 5)", midrule_groups(groups))
 
 
@@ -754,8 +780,8 @@ def table_combined(cells, outdir):
         if edfl is None or rej is None:
             continue
         groups.setdefault((s, L), []).append(
-            f"$L{{=}}{int(L)}$, {gamma_pct_label(g)}, $\\sigma_\\epsilon = {s:g}$ & {pm(edfl['alpha_asymptotic'], edfl['sem_asymptotic'], 2)} & {pct(edfl['converged_pct'])} & "
-            f"{pm(rej['alpha_asymptotic'], rej['sem_asymptotic'], 2)} & {pct(rej['converged_pct'])} & {pct(rej['accept_pct'], nd=1)} \\\\")
+            f"$L{{=}}{int(L)}$, {gamma_pct_label(g)}, $\\sigma_\\epsilon = {s:g}$ & {pm(edfl['alpha_asymptotic'], edfl['sem_asymptotic'])} & {pct(edfl['converged_pct'])} & "
+            f"{pm(rej['alpha_asymptotic'], rej['sem_asymptotic'])} & {pct(rej['converged_pct'])} & {pct(rej['accept_pct'], nd=1)} \\\\")
     write_rows(outdir / "tab_combined.tex", "Configuration & ED-FL alpha & Converged (%) & Rejection alpha & Converged (%) & Accept. (%)  (asymptotic window; rows grouped by sigma then L)", midrule_groups(groups))
 
 
@@ -765,7 +791,7 @@ def table_sequential(cells, outdir):
     for _, r in cc.iterrows():
         s = float(r["sigma_epsilon"])
         label = f"$L{{=}}{int(r['L'])}$, $\\sigma_\\epsilon = {s:g}$" + (" (noiseless)" if s == 0 and r["L"] == 1 else "")
-        groups.setdefault(s, []).append(f"{label} & {pm(r['alpha_full'], r['sem_full'], 3)} & {pct(r['converged_pct'])} & {int(r['n_seeds_full'])} \\\\")
+        groups.setdefault(s, []).append(f"{label} & {pm(r['alpha_full'], r['sem_full'])} & {pct(r['converged_pct'])} & {int(r['n_seeds_full'])} \\\\")
     write_rows(outdir / "tab_sequential.tex", "Configuration & alpha & Converged (%) & Seeds  (full window, min_points 10; Seeds = seeds retained)", midrule_groups(groups))
 
 
@@ -774,9 +800,9 @@ def table_bare(cells, outdir):
     cc = cc[cc["protocol"].isin(["bare_adaptive", "bare_depol"])].sort_values("gamma")
     rows = []
     for _, r in cc.iterrows():
-        sym = "p_{\\mathrm{dep}}" if r["protocol"] == "bare_depol" else "\\gamma_{\\mathrm{Ham}}"
+        sym = "p_{\\mathrm{dep}}" if r["protocol"] == "bare_depol" else "\\gamma"
         label = "Noiseless" if r["gamma"] == 0 else f"${sym} = {100 * r['gamma']:g}\\%$"
-        rows.append(f"{label} & {pm(r['alpha_full'], r['sem_full'], 2)} & {pct(r['converged_pct'], nd=1)} & {int(r['n_seeds_full'])} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'], 2)} \\\\")
+        rows.append(f"{label} & {pm(r['alpha_full'], r['sem_full'])} & {pct(r['converged_pct'], nd=1)} & {int(r['n_seeds_full'])} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'])} \\\\")
     write_rows(outdir / "tab_bare_within_model.tex", "Configuration & alpha (full) & Converged (%) & Seeds & alpha (asymptotic)  (bare GHZ, adaptive N)", rows)
 
 
@@ -785,7 +811,7 @@ def table_bare_fixed(cells, outdir):
     groups: dict[int, list[str]] = {}
     for _, r in cc.iterrows():
         groups.setdefault(int(r["L"]), []).append(
-            f"$L{{=}}{int(r['L'])}$, $\\gamma_{{\\mathrm{{Ham}}}} = {r['gamma']:.2f}$ & {pm(r['alpha_full'], r['sem_full'], 3)} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'], 3)} & {pct(r['converged_pct'])} & {int(r['n_seeds_full'])} \\\\")
+            f"$L{{=}}{int(r['L'])}$, $\\gamma = {r['gamma']:.2f}$ & {pm(r['alpha_full'], r['sem_full'])} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'])} & {pct(r['converged_pct'])} & {int(r['n_seeds_full'])} \\\\")
     write_rows(outdir / "tab_bare_fixed.tex", "Configuration & alpha (full) & alpha (asymptotic) & Converged (%) & Seeds  (bare GHZ, fixed N = 2L+1)", midrule_groups(groups))
 
 
@@ -797,7 +823,7 @@ def table_realistic(cells, outdir):
         for _, r in sub.iterrows():
             label = r["mode"].replace("_", "\\_") + ("" if r["protocol"] == "bare_adaptive" else f", $L{{=}}{int(r['L'])}$")
             par = f"{r['q']:g}" if kind == "readout" else f"{r['k']:g}, $F = {r['F']:g}$"
-            rows.append(f"{label} & {par} & {r['estimator']} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'], 2)} & {pct(r['converged_pct'])} & {r['C']:.0f} & {int(r['n_seeds_asymptotic'])} \\\\")
+            rows.append(f"{label} & {par} & {r['estimator']} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'])} & {pct(r['converged_pct'])} & {r['C']:.0f} & {int(r['n_seeds_asymptotic'])} \\\\")
         write_rows(outdir / f"tab_realistic_{kind}.tex", f"Protocol & {col} & Estimator & alpha (asymptotic) & Converged (%) & C & Seeds", rows)
 
 
@@ -903,7 +929,7 @@ def main() -> None:
         hw.to_csv(derived / "hwindow_summary.csv", index=False, float_format="%.6g")
     if not fs.empty:
         fs.to_csv(derived / "fisher.csv", index=False, float_format="%.6g")
-    (results_dir / "numbers.json").write_text(json.dumps(nums, indent=1) + "\n")
+    (results_dir / "numbers.json").write_text(json.dumps(nums, indent=1) + "\n")   # indent 1: one key per line for readable diffs, minimal file size
     write_tables(cells, hw, results_dir / "tables")
     if not args.quiet:
         print_summary(cells, hw, df)

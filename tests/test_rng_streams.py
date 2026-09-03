@@ -36,7 +36,7 @@ eio = pytest.importorskip("eqsp.io")
 from eqsp.config import RunSpec, epsilon_grid, grid_resolution  # noqa: E402
 
 SEED = 1
-EPS = float(epsilon_grid()[2])
+EPS = float(epsilon_grid()[2])          # any grid target works; index 2 avoids the two endpoints, which both extended grids share
 EPS_MIN = float(epsilon_grid().min())
 
 # legacy constants
@@ -77,7 +77,7 @@ def legacy_M_max(eps, N_unit, N_code_for_nyquist, m):
 
 # --------------------------------------------------------------------------
 def test_eps_rng_is_legacy_seed_expression():
-    a = eio.eps_rng(SEED, EPS).random(16)
+    a = eio.eps_rng(SEED, EPS).random(16)   # 16 draws: two PCG64 output blocks, enough to see a wrong seed
     b = legacy_rng(SEED, EPS).random(16)
     assert np.array_equal(a, b)
     # the float64 eps objects of the grid are the legacy ones, so seeds match for all 60
@@ -116,8 +116,8 @@ def test_bare_fixed_draw_order(h):
         gammas_np = np.clip(rng.normal(gamma, gamma * h, N_code), 0.0, 10.0)   # bh:150-151
         same(p.draws, "gammas", gammas_np)
         keys.append("gammas")
-    M_evols = rng.integers(MIN_M_EVOL, M_max + 1, MAX_EXPERIMENTS)            # bh:164
-    uniforms_outcome = rng.random(MAX_EXPERIMENTS)                             # bh:165
+    M_evols = rng.integers(MIN_M_EVOL, M_max + 1, MAX_EXPERIMENTS)            # bh:163
+    uniforms_outcome = rng.random(MAX_EXPERIMENTS)                             # bh:164
     same(p.draws, "M_evols", M_evols)
     same(p.draws, "uniforms_outcome", uniforms_outcome)
     assert list(p.draws)[: len(keys) + 2] == keys + ["M_evols", "uniforms_outcome"]
@@ -192,7 +192,7 @@ def test_combined_draw_order_and_quenched_offsets(inference, marg, sigma):
     order = ["M_evols", "uniforms_outcome", "uniforms_syndrome"]
     if marg:
         # legacy --marginalize-noise (the mode that produced combined_full_likelihood_marg.csv)
-        # draws truth-side per-shot offsets after the syndrome uniforms (cb:243)
+        # draws truth-side per-shot offsets after the syndrome uniforms (cb:242)
         epsilons_per_shot = rng.normal(0.0, sigma, (MAX_EXPERIMENTS, N_total))
         same(p.draws, "epsilons_per_shot", epsilons_per_shot)
         order.append("epsilons_per_shot")
@@ -201,24 +201,16 @@ def test_combined_draw_order_and_quenched_offsets(inference, marg, sigma):
 
 @pytest.mark.parametrize("sigma", [0.0, 0.01])
 def test_sequential_streams(sigma):
+    """Per-target stream (sq:66): the first round draws uniforms of shape (K, N)
+    with K = 30 (sq:94) from the legacy per-target generator.  The quenched
+    offsets (sq:141-145, default_rng(seed)) are not exposed by the NumPy-only
+    adapter; they are covered bitwise by the committed-CSV replay in
+    test_regression.test_sequential_reproduces_committed_rows_exactly."""
     L = 1
     N = 2 * L + 1
     spec = RunSpec(protocol="sequential", L=L, sigma=sigma, model="theorem")
     p = protocols.get_protocol(spec, "cpu")
-    if not hasattr(p, "grid_m"):
-        pytest.skip("sequential adapter is NumPy-only with no per-round draw exposure; "
-                    "its stream is covered bitwise by the committed-CSV replay in test_regression")
-    # quenched offsets (sq:141-145)
-    expected_offsets = np.random.default_rng(SEED).normal(0.0, sigma, N) if sigma > 0 else np.zeros(N)
-    hits, shaped = _find_offsets(p, expected_offsets)
-    assert hits, f"no adapter attribute equals the legacy sequential offsets; candidates: {shaped}"
-    # per-target stream (sq:66): first round draws uniforms of shape (K, N) with K = 30 (sq:88)
-    draws = getattr(p, "draws", {}) or {}
-    if "uniforms" not in draws:
-        pytest.skip("sequential adapter exposes no per-round draws; covered by the exact CSV replay in test_regression")
-    first = np.asarray(draws["uniforms"])
-    if first.ndim == 3:            # (rounds, K, N)
-        first = first[0]
-    elif first.ndim == 2 and first.shape != (30, N):
-        first = first[:30]
+    p.run_seed(SEED, np.array([EPS]), "test", "none")
+    first = np.asarray(p.draws["uniforms"][0])
+    assert first.shape == (30, N)
     assert np.array_equal(first, legacy_rng(SEED, EPS).random((30, N)))

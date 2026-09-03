@@ -5,9 +5,11 @@ Two families:
 * Legacy-verbatim theorem-model kernels (Theorem thm:bitflip closed forms), lifted
   from simulation_bare_hamiltonian.py (bh), simulation_error_detected.py (ed) and
   simulation_combined.py (cb) after the closed-form check in
-  checks/check_kernels.py.  Bodies are unchanged (only the function names
-  differ) so XLA fusion and float32 rounding match the committed CSVs
-  (plan, legacy convention 19).
+  checks/check_kernels.py.  Bodies are unchanged except for two documented
+  repairs, the P_MAX clip (finding 8, NaN at p = 1) and the conjugation of the
+  bare fixed-N scan (finding 3); rows those repairs do not touch keep the
+  XLA fusion and float32 rounding of the committed CSVs (plan, legacy
+  convention 19).
 
 * New exact-model kernels.  For odd N_code and an odd number of blocks the exact
   circuit likelihood is the classical mixture over the syndrome coset
@@ -187,7 +189,7 @@ def phase_update(logpk, phi_eff_grid, outcome):
 
 @jit
 def syndrome_update_homogeneous(logpk, p_k_grid, d, N_code):
-    """log P(d | omega, M) = d log p + (N-d) log(1-p) + const (ed:81-93, verbatim)."""
+    """log P(d | omega, M) = d log p + (N-d) log(1-p) + const (ed:81-93; verbatim except the P_MAX clip, finding 8)."""
     p_safe = jnp.clip(p_k_grid, 1e-30, P_MAX)
     log_lik = d * jnp.log(p_safe) + (N_code - d) * jnp.log(1.0 - p_safe)
     logpk = logpk + log_lik
@@ -208,9 +210,11 @@ def p_grid_homogeneous(omega_grid, gamma, M_evol):
 @jit
 def p_grid_homogeneous_exact(omega_grid, gamma, M_evol):
     """p_k(omega) on the grid without the float32 cancellation of the legacy
-    form (1 - omega^2/Omega^2 loses up to 2% of p where p < 1e-7; finding of
-    checks/check_kernels.py B4x).  Used by the exact model; the theorem model
-    keeps p_grid_homogeneous for the bitwise regression."""
+    form: 1 - omega^2/Omega^2 is a float32 cancellation of two numbers near 1,
+    and where p < 1e-7 it misses p by up to 2% (measured by checks/check_kernels.py,
+    check B4x, against the float64 closed form).  Used by the exact model; the
+    theorem model keeps p_grid_homogeneous because the plan's legacy convention
+    10 preserves the legacy grid-side rounding for the regression diagnostic."""
     Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
     M_Omega = M_evol * Omega
     sin2 = jnp.sin(M_Omega) ** 2
@@ -271,7 +275,7 @@ def p_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
 
 @jit
 def syndrome_update_per_qubit(logpk, p_k_per_qubit_grid, error_mask):
-    """Per-qubit Bernoulli syndrome factor (cb:111-123, verbatim)."""
+    """Per-qubit Bernoulli syndrome factor (cb:111-123; verbatim except the P_MAX clip, finding 8)."""
     p_safe = jnp.clip(p_k_per_qubit_grid, 1e-30, P_MAX)
     log_lik = error_mask[None, :] * jnp.log(p_safe) + (1.0 - error_mask[None, :]) * jnp.log(1.0 - p_safe)
     log_lik_sum = jnp.sum(log_lik, axis=1)
@@ -321,6 +325,8 @@ def phi_eff_with_errors(phi_per_qubit, error_mask):
 def _finish(logpk, shift, A, Zre, log_vis, outcome):
     sign = jnp.where(outcome == 0, 1.0, -1.0)
     lik = 0.5 * (A + sign * jnp.exp(log_vis) * Zre)
+    # A and Zre carry the per-grid-point shift (A = O(1) at the dominant pattern), so the floor acts on the
+    # likelihood relative to its own scale at that grid point: the same relative floor at every omega_j.
     log_lik = shift + jnp.log(jnp.maximum(lik, LIK_FLOOR))
     logpk = logpk + log_lik
     return logpk - logsumexp(logpk)
@@ -372,6 +378,8 @@ def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, ou
         sl = slice(b * Nc, (b + 1) * Nc)
         Xb = X[b]                                                        # (P, Nc)
         Xc = 1.0 - Xb
+        # HIGHEST: on GPU the default matmul precision uses TF32 (10-bit mantissa) for float32 dots; these dots
+        # sum log-probabilities that are exponentiated below, so a 1e-3 relative error would leak into P_b.
         la = (jnp.dot(lp[:, sl], Xb.T, precision=HIGHEST)
               + jnp.dot(l1p[:, sl], Xc.T, precision=HIGHEST) + logw[b][None, :])   # (G, P)
         Ph = jnp.dot(phi_grid[:, sl], Xc.T, precision=HIGHEST)          # clean-qubit phase sums

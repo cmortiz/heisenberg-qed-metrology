@@ -14,7 +14,7 @@ runs = [d.iloc[:60], d.iloc[60:]]
 assert all(len(g) == 60 and g.epsilon.nunique() == 60 for g in runs), [len(g) for g in runs]
 print("legacy runs (row blocks):", [(int(g.index[0]), int(g.index[-1]), g.timestamp.min()[:19], g.timestamp.max()[:19]) for g in runs])
 spec = RunSpec("bare_adaptive", gamma=0.0, model="theorem", stop="legacy")
-rows = engine.run_seed(get_protocol(spec, "cpu"), spec, 1, epsilon_grid(), "spot", "cpu", progress=True)
+rows = engine.run_seed(get_protocol(spec, "cpu"), spec, 1, epsilon_grid(), engine_version="spot", jax_version="cpu", progress=True)
 new = pd.DataFrame(rows)
 stats = {"A": 0, "B": 0, "both": 0, "neither": 0}
 for _, r in new.iterrows():

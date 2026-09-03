@@ -189,7 +189,7 @@ class LogFit:
 
 def logfit(cell: pd.DataFrame) -> LogFit:
     sub = cell[coerce_converged(cell["converged"])]
-    if sub["epsilon"].nunique() < 10:
+    if sub["epsilon"].nunique() < WINDOWS["full"][1]:   # same retention rule as the full window (10 targets)
         return LogFit(np.nan, np.nan, np.nan, np.nan, np.nan, int(sub["epsilon"].nunique()))
     m = sub.groupby("epsilon")["total_resources"].mean()
     eps = m.index.to_numpy(float)

@@ -8,8 +8,7 @@ import sys
 
 from ..config import RunSpec
 
-PROTOCOLS = ("bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow")
-JAX_PROTOCOLS = ("bare_adaptive", "bare_fixed", "ed", "combined", "hwindow")
+PROTOCOLS = ("bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow")   # every protocol but sequential runs on the JAX engine
 
 
 def set_device(device: str) -> None:

@@ -2,7 +2,7 @@
 """Paper figures from numbers.json (every printed alpha) and the suite CSVs (data points).
 
 Usage
-    uv run python scripts/plot.py                       # results/v2 -> ../figures/*.pdf
+    uv run python scripts/plot.py                       # results/v2 -> ../figures/*.pdf (+ a 300 dpi .png of each)
     uv run python scripts/plot.py --v1 --out /tmp/v1figs   # committed CSVs; fig1-3 only
     uv run python scripts/plot.py --figs fig1 fig4
 
@@ -176,7 +176,6 @@ def figure1(df, nums, out):
         legend.append(Line2D([0], [0], color=ED_COLOR, ls=(0, (4, 2)), lw=1.4, marker="s", ms=2.6,
                              label=r"ED-FL, $L{=}1$ ($N{=}3$), $\gamma{=}10\%$"))
     setup_loglog_axes(ax)
-    ax.set_ylim(1e2, 1e9)
     for eps, T, text, color, xf in annotate:
         add_alpha_annotation(ax, eps, T, text, color, x_frac=xf)
     ax.legend(handles=legend, loc="upper right", fontsize=6.5, handlelength=2.0, handletextpad=0.5, labelspacing=0.3)
@@ -284,9 +283,9 @@ def figure3(df, nums, out):
         print("  skip: no combined cells")
         return
     setup_loglog_axes(ax)
-    ax.set_ylim(1e2, 1e9)
     ax.axvline(fit.EPS_ASYMPTOTIC, color=REF_COLOR, ls=":", lw=0.6, zorder=1)
-    ax.text(fit.EPS_ASYMPTOTIC * 1.1, 1.6e2, "fit window", fontsize=6, color=REF_COLOR, ha="left", va="bottom")
+    ax.text(fit.EPS_ASYMPTOTIC * 1.1, 0.03, "fit window", fontsize=6, color=REF_COLOR, ha="left", va="bottom",
+            transform=ax.get_xaxis_transform())
     ax.legend(handles=legend, loc="upper right", fontsize=6.5, handlelength=2.0, handletextpad=0.5, labelspacing=0.4)
     save(fig, out, "fig3_combined_protocol")
 
@@ -357,10 +356,10 @@ def figure5(df, nums, out):
     qcolors = dict(zip(qs, THREE_COLORS[: len(qs)]))
     legend = []
     for q in qs:
-        for proto, mode, marker, L, Lpart in (("bare_adaptive", "bare_hamiltonian_adaptive", "o", 0, ""), ("ed", "ed_full_likelihood", "s", 1, "_L1")):
+        for proto, mode, marker, L in (("bare_adaptive", "bare_hamiltonian_adaptive", "o", None), ("ed", "ed_full_likelihood", "s", 1)):
             for est, ls in (("mismatched", "-"), ("aware", "--")):
-                cell = rows(df[(df["protocol"] == proto) & (df["mode"] == mode) & (df["estimator"] == est)], q=q, L=L) if L else \
-                    rows(df[(df["protocol"] == proto) & (df["mode"] == mode) & (df["estimator"] == est)], q=q)
+                sub = df[(df["protocol"] == proto) & (df["mode"] == mode) & (df["estimator"] == est)]
+                cell = rows(sub, q=q) if L is None else rows(sub, q=q, L=L)      # adaptive bare has no L
                 if cell.empty:
                     continue
                 d = gmean_T_per_eps(cell)
@@ -388,10 +387,18 @@ def figure5(df, nums, out):
     pcolors = dict(zip([p[0] + str(p[2]) for p in protos], plt.cm.viridis(np.linspace(0.05, 0.9, len(protos)))))
     legend_b = []
     for name, proto, L, marker in protos:
+        if name == "sequential":
+            # product-state probe: F only, no k dependence and no estimator (key tab_realistic.prep.sequential_L{L}_F{F})
+            e = next((nums[k] for k in nums if k.startswith(f"tab_realistic.prep.sequential_L{L}_F") and k.endswith(".alpha")), None)
+            if e and e.get("value") is not None:
+                c = pcolors[name + str(L)]
+                ax_b.axhline(e["value"], color=c, ls="-", lw=0.8, zorder=2)
+                legend_b.append(Line2D([0], [0], color=c, lw=0.8, label=f"sequential L={L} (F only)"))
+            continue
         for est, fill in (("mismatched", "full"), ("aware", "none")):
             xs, ys, es = [], [], []
             for k in ks:
-                key = f"tab_realistic.prep.{name}{'' if L is None else f'_L{L}'}_{kk(k)}_{est}.alpha"
+                key = f"tab_realistic.prep.{name}_L{L}_{kk(k)}_{est}.alpha" if L is not None else f"tab_realistic.prep.{name}_{kk(k)}_{est}.alpha"
                 e = nums.get(key)
                 if e and e.get("value") is not None:
                     xs.append(k)

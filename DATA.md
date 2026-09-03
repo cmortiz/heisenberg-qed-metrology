@@ -56,7 +56,7 @@ Across seeds: $\alpha$ = mean, sem = std(ddof=1)/$\sqrt{n}$, ci95 = $t_{0.975,n-
 
 | Window | Targets | min_points | Elements |
 |---|---|---|---|
-| full | all 60 ($\varepsilon \in [10^{-4}, 10^{-1}]$) | 10 | Fig. 1, `tab:bare-within-model`, `tab:sequential-results`, bare rows of `tab:prefactor-results`, Fig. 4 |
+| full | all 60 ($\varepsilon \in [10^{-4}, 10^{-1}]$) | 10 | Fig. 1, `tab:bare-within-model`, `tab:sequential-results`, bare rows of `tab:prefactor-results` (Fig. 4 has no fit: T(N) at one target) |
 | asymptotic | $\varepsilon < 10^{-2}$ | 5 | Fig. 2, Fig. 3, Fig. 5, `tab:error-detected-results`, `tab:combined-results`, `tab:realistic-noise`, ED rows of `tab:prefactor-results`, Fisher saturation |
 
 **Seeds retained.** A seed enters a fit only if it has at least `min_points` converged targets inside the window;
@@ -84,7 +84,7 @@ engine_version, jax_version, timestamp
 Grouping keys (`GROUP_KEYS`): `protocol, mode, gamma, h, sigma_epsilon, L, q, k, F, estimator, model, stop_rule`. `mode` keeps the
 legacy labels (`bare_hamiltonian`, `ed_full_likelihood`, `ed_postselect`, `combined_full_likelihood`,
 `combined_postselect`, `combined_full_likelihood_marg`, `sequential`) plus `bare_hamiltonian_adaptive`, `hwindow`, and
-`combined_full_likelihood_marg_capped` (marg with the depth capped at $M^{\mathrm{opt}} = 1/(2\sigma_\varepsilon\sqrt{N_{\mathrm{total}}})$; `--marg-cap`).
+`combined_full_likelihood_marg_capped` (marg with the depth capped at $M^{\mathrm{opt}} = \lceil 1/(2\sigma_\varepsilon\sqrt{N_{\mathrm{total}}}) \rceil$; `--marg-cap`).
 The alpha fit reads only `seed, epsilon, total_resources, converged`. `--merge` sorts by the grouping keys plus
 `seed, epsilon` (plus `N` for hwindow) and `timestamp`, then deduplicates on those keys keeping the last row.
 `engine_version` is the numerics git short SHA (`-dirty` if the tree had uncommitted tracked changes),
@@ -111,7 +111,9 @@ Produced by the legacy scripts at tag `v1-jax-suite` (GPU float32 XLA, May 2026)
 | `analysis_summary.csv` | 7 | | legacy summary table | no |
 
 Legacy headers (no `protocol`, `q`, `k`, `F`, `estimator`, `model`, `engine_version`, `jax_version`;
-`analyze.py --v1` fills the missing grouping keys with `q = 0, k = F = 1, estimator = mismatched, model = legacy`):
+`analyze.py` fills every missing grouping key from `KEY_FILL` = `gamma = h = sigma_epsilon = 0, L = 0, q = 0, k = F = 1,
+estimator = mismatched, model = legacy, stop_rule = legacy`, and `N = -1` for the non-window protocols; this applies to any CSV
+it reads, v1 or v2, the sentinels being values no run produces):
 
 ```
 bare_ghz:            seed,gamma,h,epsilon,mode,N,total_resources,converged,final_error,timestamp
@@ -131,7 +133,7 @@ rounded to 199); `bare_ghz.csv` carries $\gamma = 0$ seeds 1 and 2 twice with di
 `suite.py --merge` deduplicate on the grouping keys plus `seed` and `epsilon`, keeping the last row.
 
 The committed `scripts/results/numbers.json`, `scripts/results/tables/*.tex`, and `scripts/results/derived/{cells,fisher}.csv`
-are the output of `analyze.py --v1` on these files (742 keys) and are the pre-rerun provenance of the paper's numbers.
+are the output of `analyze.py --v1` on these files (`python -c "import json; print(len(json.load(open('scripts/results/numbers.json'))))"` prints the key count) and are the pre-rerun provenance of the paper's numbers.
 
 ## Not in this repository
 

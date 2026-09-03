@@ -32,7 +32,7 @@ eqsp/fit.py                     the one OLS alpha fit (two windows), prefactor, 
 eqsp/protocols/bare_adaptive.py bare GHZ, Hamiltonian noise, N = clip(floor(1/eps), 10, 16384), n ~ U{1..N}, M = 1
 eqsp/protocols/bare_fixed.py    bare GHZ, Hamiltonian noise, fixed odd N = 2L+1, M ~ U{1..M_max}
 eqsp/protocols/ed.py            error-detected GHZ, one [[2L+1, 1]] repetition block, inference fl | ps
-eqsp/protocols/combined.py      logical GHZ over three blocks, per-qubit offsets, inference fl | ps | marg (--marg-cap caps M at 1/(2 sigma sqrt(N_total)))
+eqsp/protocols/combined.py      logical GHZ over three blocks, per-qubit offsets, inference fl | ps | marg (--marg-cap caps M at ceil(1/(2 sigma sqrt(N_total))))
 eqsp/protocols/sequential.py    sequential binary search with product-state probes (NumPy only)
 eqsp/protocols/hwindow.py       Heisenberg-window sweep T(N) at fixed eps_tar with shot-to-shot offsets
 scripts/run.py                  CLI: one protocol, one or more seeds, one shard per seed
@@ -59,8 +59,8 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
 
 - **Repetition-code GHZ (ED, combined), `model=exact` (default).** The exact circuit
   likelihood is a classical mixture over the two error patterns consistent with each
-  block's syndrome (the pattern and its logical-X coset partner, relative weight
-  $(p/(1-p))^{(N-2d)/2}$), `ghz_code_probs` / `ghz_code_probs_mixture`.
+  block's syndrome (the pattern and its logical-X coset partner, relative probability
+  weight $(p/(1-p))^{N-2d}$), `ghz_code_probs` / `ghz_code_probs_mixture`.
 - **`model=theorem`.** Reproduces the closed form of Theorem `thm:bitflip` and the
   legacy simulators (minimum-weight pattern only), `ghz_code_probs_theorem`. Used
   by the regression diagnostic; not for production numbers.
@@ -89,9 +89,10 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
    parity likelihood is $\propto \cos(2\Phi - \theta_i)$ and the sign of the phase is
    identifiable. Fixed-axis parity alone is even in the phase and $\pi/N$-periodic up
    to $O(\gamma^2/\Omega^2)$ amplitude terms, so the legacy $[0, 2\pi)$ prior carried
-   near-degenerate mirror modes (v1 non-converged `bare_hamiltonian` rows sit at
-   $|\hat\omega - \omega| \in \{3.138, 2.095, 0.651\}$, the mirrors of $\Omega$ at
-   $\Omega + \pi$, $\Omega + 2\pi/3$, $2\pi - \Omega$) and the v1 depolarizing bare
+   near-degenerate mirror modes (v1 non-converged `bare_hamiltonian` rows cluster at
+   discrete errors: $3.138 \approx \pi$ (the parity mirror at $\omega + \pi$) and
+   $2.095 = 2\pi/3$, $1.257 = 2\pi/5$, $0.449 = \pi/7$, multiples of the $\pi/N$ period at
+   $N = 3, 5, 7$) and the v1 depolarizing bare
    likelihood $\cos(2n\omega)$ was exactly bimodal on $[0, \pi)$; the truth-based
    legacy stop masked both (finding 2026-09-02). `model=theorem` keeps the legacy
    grids and no phase for the regression diagnostic.
@@ -116,7 +117,8 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
    `bare_fixed`, `ed`, `combined`; `m = 16` for `bare_adaptive` and `hwindow`.
 5. Legacy check cadence (`--stop legacy` only): `bare_adaptive` every 100 rounds
    including round 0; `bare_fixed` every 100 rounds from round 1; FL every 10
-   updates; PS every 100 accepted shots; `hwindow` every shot. Rejected rounds are
+   updates; PS every 100 accepted shots; `hwindow` every 10 shots (its posterior-stop
+   device loop checks every update). Rejected rounds are
    charged but never update or check, under either rule.
 
 Numerical guard (finding of the v2 full run): a syndrome probability is clipped to `[1e-30, P_MAX]` with
@@ -203,10 +205,11 @@ residual of that model and of a pure power law on the same averaged data (`deriv
 ## Tests
 
 ```bash
-uv run pytest                  # 165 tests: closed forms vs PennyLane (126), RNG replay (17), engine (21),
-                               # always-on exact reproduction of committed sequential.csv rows (1)
+uv run pytest                  # 189 tests (uv run pytest --co -q per file for the split): closed forms vs
+                               # PennyLane (139), RNG replay (17), engine (32), always-on exact
+                               # reproduction of committed sequential.csv rows (1)
 uv run pytest -m regression    # diagnostic tiers against scripts/results/*.csv; writes
-                               # scripts/results/v2/regression_report.md; reported, never gating
+                               # results/v2/regression_report.md; reported, never gating
 ```
 
 The regression exact tier reruns seeds 1 and 2 of one cell per protocol with

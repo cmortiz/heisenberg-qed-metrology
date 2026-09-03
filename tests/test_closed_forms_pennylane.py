@@ -32,8 +32,16 @@ from scipy.stats import binom  # noqa: E402
 
 from eqsp import closed_forms as cf  # noqa: E402
 
+# Tolerance rule.  TOL = 1e-6 is the closed-form-vs-circuit bar of the plan (Tests subsection):
+# it is loose enough for the float64 state-vector round-off accumulated over M-fold phase
+# products at M = 123, and tight enough to catch a wrong O(gamma^2/Omega^2) term (>= 1e-3 at
+# the fixtures).  Identities between two closed forms evaluated in float64 use 1e-12 (a few
+# hundred ulp); sums that must be exactly 1 use 1e-10 to 1e-15 according to the number of
+# terms; the theorem-form gap table uses 1e-8 because it compares O(1e-2) quantities.
 TOL = 1e-6
 OMEGA = 0.3
+# (gamma, M) fixtures verified in the planning session against exp(-i M (omega Z + gamma X))
+# (plan, "Verified this session"): weak noise / small M, weak noise / large M, strong noise.
 GM = [(0.1, 7), (0.05, 123), (0.3, 5)]
 LAYOUTS = {
     "N3": [[0, 1, 2]],
@@ -41,7 +49,9 @@ LAYOUTS = {
     "N7": [list(range(7))],
     "3x3": [[0, 1, 2], [3, 4, 5], [6, 7, 8]],
 }
-# heterogeneous fixtures: omega_k = OMEGA + offset_k, per-qubit gamma_k
+# heterogeneous fixtures: omega_k = OMEGA + offset_k, per-qubit gamma_k.  Arbitrary
+# O(sigma_eps = 0.01 to 0.03) offsets and gamma_k spread +-40% about 0.1 so that no two
+# qubits share (omega_k, gamma_k) and a per-qubit bug cannot cancel in the product.
 HET = {
     "N3": (np.array([0.02, -0.01, 0.005]), np.array([0.10, 0.07, 0.12])),
     "3x3": (
@@ -316,7 +326,13 @@ def test_conditional_phase_is_two_Neff_phi_to_leading_order(layout, gamma, M):
         ixbar = int("".join(str(int(b)) for b in ~x), 2)
         rel = np.angle(psi[ixbar] / psi[ix])
         gap = abs(np.exp(1j * rel) - np.exp(2j * (N - d) * phi))
-        bound = 6.0 * ratio ** ((N - 2 * d) / 2)
+        # the |1...1>-branch amplitude enters psi[ix] and psi[ixbar] with relative size
+        # r = ratio^((N-2d)/2) < 1; each factor (1 + r e^{ia}) has phase at most arcsin(r),
+        # so the ratio's phase is off by at most 2 arcsin(r) <= pi r, and |e^{i t} - 1| <= |t|
+        # gives gap <= pi r < 6 r (largest fixture r = 0.76 at gamma = 0.3, M = 5, d = (N-1)/2)
+        r = ratio ** ((N - 2 * d) / 2)
+        assert r < 1.0, (layout, gamma, M, s, r)
+        bound = 6.0 * r
         assert gap <= bound, (layout, gamma, M, s, gap, bound)
 
 
@@ -327,7 +343,7 @@ def test_conditional_phase_is_two_Neff_phi_to_leading_order(layout, gamma, M):
 @pytest.mark.parametrize("gamma,M", [(0.1, 1), (0.05, 1), (0.3, 1)] + GM)
 def test_bare_parity_matches_circuit(n, gamma, M):
     omegas, gammas = np.full(n, OMEGA), np.full(n, gamma)
-    P = to_syndrome_parity(joint_probs(omegas, gammas, M, [list(range(n))][:0] or [[k] for k in range(n)]), n, 0)
+    P = to_syndrome_parity(joint_probs(omegas, gammas, M, [[k] for k in range(n)]), n, 0)
     # blocks of size 1 produce no syndrome wires; parity = XOR of data bits
     x_exp = P[((), 0)] - P[((), 1)]
     val = cf.bare_parity(OMEGA, gamma, M, n)
@@ -404,7 +420,7 @@ EVEN_N_PREP_FINDING = (
 )
 
 
-@pytest.mark.parametrize("n", [3, 4])  # n = 4 failed before the 2026-09-02 fix (EVEN_N_PREP_FINDING)
+@pytest.mark.parametrize("n", [3, 4])  # n = 4 failed before the 2026-09-02 fix; the assertion message is EVEN_N_PREP_FINDING
 def test_prep_visibility_bare_parity(n):
     gamma, M = 0.1, 7
     V = cf.prep_visibility(0.99, 0.99, n)
@@ -414,7 +430,7 @@ def test_prep_visibility_bare_parity(n):
     Pm = joint_probs(omegas, gammas, M, blocks, ghz_sign=-1)
     P = to_syndrome_parity(0.5 * (1 + V) * Pp + 0.5 * (1 - V) * Pm, n, 0)
     for v in (0, 1):
-        assert abs(cf.bare_parity_prob(OMEGA, gamma, M, n, v, V=V) - P[((), v)]) < TOL
+        assert abs(cf.bare_parity_prob(OMEGA, gamma, M, n, v, V=V) - P[((), v)]) < TOL, EVEN_N_PREP_FINDING
 
 
 # --------------------------------------------------------------------------
@@ -438,27 +454,33 @@ def test_qaware_probs_is_flip_convolution_and_normalised(layout, q):
         assert abs(pp - P_obs[(s, 0)]) < TOL, (layout, q, s, pp, P_obs[(s, 0)])
         assert abs(pm - P_obs[(s, 1)]) < TOL, (layout, q, s, pm, P_obs[(s, 1)])
     assert abs(total - 1.0) < 1e-10
-    # q = 0 reduces to the exact form
-    for s in all_syndromes(n_syn)[:2]:
+    # q = 0 reduces to the exact form (every syndrome)
+    for s in all_syndromes(n_syn):
         pp0, pm0 = cf.qaware_probs(a, c, blocks, np.array(s), 0.0)
         pp, pm = cf.ghz_code_probs(a, c, blocks, representative_pattern(s, blocks, N))
         assert abs(pp0 - pp) < 1e-12 and abs(pm0 - pm) < 1e-12
 
 
+def test_flip_weights_normalise():
+    """For a fixed true pattern the weights q^dH (1-q)^(n_syn-dH) over all observed
+    syndromes sum to 1 (binomial identity; the model the function implements)."""
+    blocks = LAYOUTS["N5"]
+    q, n_syn = 0.02, 4
+    s_true = cf.syndrome_of(np.array([False, True, False, False, False]), blocks)
+    total = sum(q ** int(np.sum(np.array(s) != s_true)) * (1 - q) ** (n_syn - int(np.sum(np.array(s) != s_true)))
+                for s in all_syndromes(n_syn))
+    assert abs(total - 1.0) < 1e-12
+
+
 def test_flipped_syndrome_weights_sum_over_observed():
-    """Sum over s_obs of the flip weights for a fixed true pattern is 1."""
+    """The function's weight for (E, s_obs) is q^dH (1-q)^(n_syn-dH) with dH the Hamming
+    distance between the observed syndrome and the syndrome of E, for every pattern E it
+    returns; the weights over all s_obs for a fixed E sum to 1 (checked by the binomial
+    identity in test_flip_weights_normalise below)."""
     blocks = LAYOUTS["N5"]
     q = 0.02
     n_syn = 4
-    E = np.array([False, True, False, False, False])
-    s_true = cf.syndrome_of(E, blocks)
-    total = 0.0
-    for s_obs in all_syndromes(n_syn):
-        dH = int(np.sum(np.array(s_obs) != s_true))
-        total += q**dH * (1 - q) ** (n_syn - dH)
-    assert abs(total - 1.0) < 1e-12
-    # and the function's weight for (E, s_obs) matches that formula
-    for E2, w in cf.flipped_syndrome_weights(np.array([0, 1, 0, 0]), blocks, q)[:8]:
+    for E2, w in cf.flipped_syndrome_weights(np.array([0, 1, 0, 0]), blocks, q):
         dH = int(np.sum(cf.syndrome_of(E2, blocks) != np.array([0, 1, 0, 0])))
         assert abs(w - q**dH * (1 - q) ** (n_syn - dH)) < 1e-15
 
@@ -532,6 +554,9 @@ def test_theorem_form_gap_table(capsys):
     # orchestrator's reference point: gamma=0.1, M=7, N=3, d=1
     ref = [r for r in rows if r["layout"] == "N3" and r["gamma"] == 0.1 and r["M"] == 7 and r["d"] == 1]
     assert len(ref) == 3  # N = 3: syndromes 01, 10, 11 all have minimum weight 1
+    # 0.0750 / 0.0539: the conditional flip probabilities computed in the planning session
+    # (2026-09-02) from the float64 matrix exponential at this fixture, pinned to 3 decimals so
+    # the gap table cannot drift silently; 1e-3 is the rounding of the pinned values
     for r in ref:
         assert abs(r["exact_cond"] - 0.0750) < 1e-3, r
         assert abs(r["thm_cond"] - 0.0539) < 1e-3, r
@@ -605,12 +630,16 @@ def test_mixture_fails_for_even_layouts_but_exact_form_holds(layout, blocks, gam
         print(f"\n[even layout {layout} gamma={gamma} M={M}] max|circuit - exact| = {worst_exact:.2e}, "
               f"max|circuit - mixture| = {worst_mix:.2e}")
     assert worst_exact < TOL
+    # the even-N interference term is O(p^{N/2}) = O(1e-3) or larger at these fixtures; 1e-4 sits
+    # two decades above TOL so a mixture that "accidentally" matched would be caught
     assert worst_mix > 1e-4, (layout, gamma, M, worst_mix)
 
 
 # --------------------------------------------------------------------------
 # (viii) Heisenberg-window likelihood: Gaussian average of the truth model
 # --------------------------------------------------------------------------
+# fixtures: N* = 1/(2 sigma^2) for both suite sigmas, N*/16 (grid start), and 4 N* at sigma = 0.1
+# (grid end, visibility e^{-16}: the quadrature must still reproduce the near-flat likelihood)
 @pytest.mark.parametrize("N,sigma", [(200, 0.05), (50, 0.1), (13, 0.05), (800, 0.1)])
 @pytest.mark.parametrize("theta", [0.0, 1.3])
 def test_hwindow_prob_is_gaussian_average(N, sigma, theta):
@@ -628,7 +657,9 @@ def test_hwindow_prob_is_gaussian_average(N, sigma, theta):
 
 
 def test_marg_log_visibility_matches_gaussian_average():
-    """cb marg mode: E[cos(2 M sum_k (omega + eps_k))] over N_clean i.i.d. offsets."""
+    """cb marg mode: E[cos(2 M sum_k (omega + eps_k))] over N_clean i.i.d. offsets.
+    Fixture: M sigma sqrt(N_clean) = 0.87, where the visibility e^{-2 M^2 N sigma^2} = 0.22 is
+    neither ~1 nor ~0; 1e-8 is the quadrature's epsabs times a safety factor."""
     M, N_clean, sigma = 13, 5, 0.03
     sd = sigma * math.sqrt(N_clean)
     omega = OMEGA
@@ -642,7 +673,7 @@ def test_marg_log_visibility_matches_gaussian_average():
 
 
 # --------------------------------------------------------------------------
-# (vii) preparation phase theta: coherent term rotates, population term does not
+# (ix) preparation phase theta: coherent term rotates, population term does not
 # --------------------------------------------------------------------------
 @pytest.mark.parametrize("theta", [0.7, 2.9])
 @pytest.mark.parametrize("n,gamma,M", [(3, 0.1, 7), (4, 0.3, 5), (5, 0.05, 123)])

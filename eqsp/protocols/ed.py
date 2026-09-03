@@ -172,11 +172,9 @@ class ErrorDetected:
             logc = shot.aux["logc"]
         else:
             d = shot.aux["d_inf"]
-            logc = np.full(N + 1, -np.inf)
+            logc = np.full(N + 1, -np.inf)                               # exact model (theorem + mismatched returned above): both coset members
             logc[d] = 0.0
             logc[N - d] = 0.0
-            if self.theorem:
-                logc[N - d] = -np.inf                                     # theorem + q>0 mismatched: one coset member
         return H.exact_ed_update(logpk, p_grid, phi_grid, jnp.asarray(logc, dtype=jnp.float32),
                                  jnp.float32(self.log_vis), shot.outcome, jnp.float32(shot.aux["theta"]))
 
