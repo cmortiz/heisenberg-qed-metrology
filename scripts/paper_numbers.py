@@ -155,7 +155,7 @@ def main():
     out = NUM_RE.sub(lambda m: resolved[m.group(1)][1], tex)
     stamp = f"% \\NUMSRC numbers.json {args.numbers} @ {data_sha(args.numbers)}\n"
     if "% \\NUMSRC" in out:
-        out = re.sub(r"% \\NUMSRC[^\n]*\n", stamp, out, count=1)
+        out = re.sub(r"% \\NUMSRC[^\n]*\n", lambda _m: stamp, out, count=1)   # lambda: the stamp holds backslashes
     else:
         out = out.replace("\\newcommand{\\NUM}", stamp + "\\newcommand{\\NUM}", 1)
     args.tex.write_text(out)
