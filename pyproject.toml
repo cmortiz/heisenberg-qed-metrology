@@ -18,8 +18,6 @@ test = ["pennylane>=0.40", "pytest>=8"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-m 'not regression'"
-markers = ["regression: diagnostic comparison against committed v1 CSVs (reported, never gating)"]
 
 [tool.uv]
 package = false

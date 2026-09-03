@@ -3,16 +3,14 @@
 
 Usage
     uv run python scripts/plot.py                       # results/v2 -> ../figures/*.pdf (+ a 300 dpi .png of each)
-    uv run python scripts/plot.py --v1 --out /tmp/v1figs   # committed CSVs; fig1-3 only
     uv run python scripts/plot.py --figs fig1 fig4
 
-Rule (plan, provenance item 1): no fit is performed here.  Slopes, intercepts and CI widths
+No fit is performed here.  Slopes, intercepts and CI widths
 come from numbers.json entries written by analyze.py; the CSVs supply only the per-epsilon
 data markers (geometric mean of T over converged seeds).  Each figure uses the window of the
 table it accompanies: fig1, fig4 full range; fig2, fig3, fig5 asymptotic (eps < 1e-2).
 Fit lines are drawn over their window only; the 95% CI fan is centred on the window's
-log-midpoint (the legacy band pivoted at eps = 1, which inflates it at small eps).
-Styling lifted from scripts/plot_redesigned.py (v1-jax-suite).
+log-midpoint (a band pivoted at eps = 1 would be inflated at small eps).
 """
 from __future__ import annotations
 
@@ -34,7 +32,7 @@ from matplotlib.patches import Patch  # noqa: E402
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "scripts"))
-from analyze import FIG1_BARE_GAMMAS, FIG3_CELLS, V1_DIR, V2_DIR, clean, gk, kk, load_results, qk, sk  # noqa: E402
+from analyze import FIG1_BARE_GAMMAS, FIG3_CELLS, V2_DIR, clean, gk, kk, load_results, qk, sk  # noqa: E402
 from eqsp import fit  # noqa: E402
 
 FIGURES_DIR = REPO.parent / "figures"
@@ -83,9 +81,8 @@ def rows(df: pd.DataFrame, **cond) -> pd.DataFrame:
 
 
 def bare_adaptive(df: pd.DataFrame) -> pd.DataFrame:
-    """v2 bare_adaptive; in --v1 mode the legacy depolarizing bare_ghz rows (h = 0)."""
-    sub = clean(df[df["protocol"].isin(["bare_adaptive", "bare_depol"])])
-    return sub[sub["h"] == 0]
+    """Bare GHZ with adaptive N, no readout or prep noise."""
+    return clean(df[df["protocol"] == "bare_adaptive"])
 
 
 def gmean_T_per_eps(cell: pd.DataFrame) -> pd.DataFrame:
@@ -431,12 +428,11 @@ FIGURES = {"fig1": figure1, "fig2": figure2, "fig3": figure3, "fig4": figure4, "
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--results-dir", type=Path, default=None)
-    ap.add_argument("--v1", action="store_true", help="committed legacy CSVs (scripts/results); fig4/fig5 have no data there")
     ap.add_argument("--out", type=Path, default=FIGURES_DIR, help="output directory (default ../figures)")
     ap.add_argument("--figs", nargs="+", choices=sorted(FIGURES), default=sorted(FIGURES))
     args = ap.parse_args()
-    results_dir = args.results_dir or (V1_DIR if args.v1 else V2_DIR)
-    df = load_results(results_dir, v1=args.v1)
+    results_dir = args.results_dir or V2_DIR
+    df = load_results(results_dir)
     nums = load_numbers(results_dir)
     for name in args.figs:
         FIGURES[name](df, nums, args.out)

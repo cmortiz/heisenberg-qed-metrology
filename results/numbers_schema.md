@@ -1,7 +1,7 @@
 # numbers.json schema
 
-Written by `scripts/analyze.py` to `<results-dir>/numbers.json` (default `results/v2/`, or
-`scripts/results/` with `--v1`). One key per paper element. Workstream G reads only this file;
+Written by `scripts/analyze.py` to `<results-dir>/numbers.json` (default `results/v2/`).
+One key per paper element. The paper reads only this file;
 `scripts/plot.py` takes every printed alpha from it and never fits.
 
 ## Value object
@@ -24,7 +24,7 @@ retaining at least min_points converged targets).
 ## Key grammar
 
 Cell tokens: `L{L}` (repetition block `[[2L+1, 1]]`: N_code = 2L+1, corrects L flips);
-`g{gamma:.2f}` (g0.00, g0.01, g0.05, g0.10 in v2; `--v1` also g0.30, g0.45);
+`g{gamma:.2f}` (g0.00, g0.01, g0.05, g0.10);
 `s{sigma:.2f}` (s0.00, s0.01, s0.05, s0.10); `q{q:g}` (q0.001, q0.01, q0.03); `k{k:g}` (k0.99, k0.995,
 k0.999); `F{F:g}` (F0.99, sequential prep runs, which set F only); estimator `mismatched` | `aware`
 (absent for sequential, whose majority vote has no estimator).
@@ -43,7 +43,7 @@ T*eps over converged rows, full range; `sem` is of log C), and the log-law membe
 
 | Prefix | Cells | Window of `.alpha` | Extra keys |
 |---|---|---|---|
-| `fig1.alpha.bare_{g}` | bare GHZ adaptive N, gamma in {0.01, 0.05, 0.10} (v2 `bare_adaptive.csv`; `--v1`: depolarizing `bare_ghz.csv`) | full | |
+| `fig1.alpha.bare_{g}` | bare GHZ adaptive N, gamma in {0.01, 0.05, 0.10} (`bare_adaptive.csv`) | full | |
 | `fig1.alpha.edfl_L1_g0.10` | ED-FL L=1, gamma=0.10 | full | |
 | `fig2.alpha.bare_{g}`, `fig2.conv.bare_{g}` | bare GHZ adaptive N (incl. g0.00) | asymptotic | conv = converged_pct |
 | `fig2.alpha.ed_L{L}_{g}_{edfl,rej}`, `fig2.conv.ed_...` | ED cells | asymptotic | |
@@ -51,11 +51,11 @@ T*eps over converged rows, full range; `sem` is of log C), and the log-law membe
 | `fig4.window.{s}.N_star`, `.N_star_half` | 1/(2 sigma^2), 1/(4 sigma^2) | n/a | formula |
 | `fig4.window.{s}.N_argmin`, `.N_argmin_median` | sampled N minimising mean / median T (cells with >= 50 % convergence) | n/a | |
 | `fig4.window.{s}.T_mean_N{N}`, `.T_median_N{N}`, `.converged_pct_N{N}` | per (sigma, N); T over converged seeds; `sem` of the mean | n/a | |
-| `tab_prefactor.L{L}_{g}.bare_C`, `.bare_alpha_full`, `.bare_alpha_asym`, `.bare_window_shift`, `.bare_converged_pct` | bare GHZ fixed N = 2L+1 (`bare_fixed`), gamma in {0.01, 0.05, 0.10} (`--v1` also 0.30, 0.45) | full / asymptotic as named | |
+| `tab_prefactor.L{L}_{g}.bare_C`, `.bare_alpha_full`, `.bare_alpha_asym`, `.bare_window_shift`, `.bare_converged_pct` | bare GHZ fixed N = 2L+1 (`bare_fixed`), gamma in {0.01, 0.05, 0.10} | full / asymptotic as named | |
 | `tab_prefactor.L{L}_{g}.{edfl,rej}_C`, `.{edfl,rej}_alpha_asym`, `.{edfl,rej}_window_shift` | ED cells with a bare counterpart | asymptotic | |
 | `tab_prefactor.L{L}_{g}.{edfl,rej}_over_bare`, `.bare_over_{edfl,rej}` | C ratios | n/a | |
 | `tab_ed.L{L}_{g}.{edfl,rej}.<bundle>`, `.accept_pct` | tab:error-detected-results | asymptotic | |
-| `tab_combined.L{L}_{g}_{s}.{edfl,rej,marg,margcap}.<bundle>`, `.accept_pct` | tab:combined-results (sigma 0.01 and 0.05; marg and margcap at L1 g0.01 s0.01; `--v1` also the cut sigma scan) | asymptotic | |
+| `tab_combined.L{L}_{g}_{s}.{edfl,rej,marg,margcap}.<bundle>`, `.accept_pct` | tab:combined-results (sigma 0.01 and 0.05; marg and margcap at L1 g0.01 s0.01) | asymptotic | |
 | `tab_sequential.L{L}_{s}.<bundle>` | tab:sequential-results | full | `alpha.n_seeds` is the Seeds column |
 | `tab_bare_within_model.{g}.<bundle>` | bare GHZ adaptive N by gamma incl. g0.00 (replaces tab:scaling-results) | full | |
 | `tab_realistic.readout.{bare,ed,ed_rej,combined,combined_rej}[_L{L}]_{q}_{estimator}.<bundle>`, `.F`; `tab_realistic.readout.sequential_L{L}_{q}.<bundle>` | readout-flip cells (q > 0) | asymptotic | |
@@ -67,8 +67,7 @@ T*eps over converged rows, full range; `sem` is of log C), and the log-law membe
 | `text.combined.per_block_accept_pct_L{L}_{g}_{s}`, `.per_block_accept_gap_L1_g0.05_s0.01` | cube root of the joint rejection-sampling acceptance, percent; gap to the ED L=1 g0.05 acceptance | n/a | |
 | `text.combined.alpha_asym_max_edfl` | largest asymptotic alpha over the combined ED-FL cells | asymptotic | |
 | `text.ed.alpha_asym_{edfl,rej}_range`, `.alpha_asym_max_dev`, `.conv_edfl_min` | ranges over the ED table; largest deviation of an ED-FL asymptotic alpha from 1; smallest ED-FL convergence | asymptotic / n/a | |
-| `text.sequential.M_exec_max_eps1e-2` | deepest executed round depth at the grid eps nearest 1e-2: v2 `M_exec_max` column; `--v1` fallback replays the deterministic schedule (note says which) | n/a | |
-| `text.sequential.M_max_used_eps1e-2` | legacy column ceil((pi/2)/(2 eps sqrt N)) (only when the column exists), labelled not-the-executed-depth | n/a | |
+| `text.sequential.M_exec_max_eps1e-2` | deepest executed round depth at the grid eps nearest 1e-2, from the `M_exec_max` column | n/a | |
 | `text.sequential.M2sigma2_{s}_eps1e-2`, `.visibility_{s}_eps1e-2`, `.eps_quoted` | M_exec_max^2 sigma^2; exp(-M_exec_max^2 sigma^2 / 2); the eps grid point used | n/a | |
 | `text.sequential.alpha_full_{noiseless,s0.01,s0.05}`, `.alpha_asym_{tag}_range`, `.conv_{tag}_range` | per sigma: full-window alpha (over L), [min, max] over L of the asymptotic alpha and of the convergence | full / asymptotic / n/a | |
 | `text.sequential.alpha_schedule_range`, `.alpha_schedule_asym_range`, `.T_seed_spread_pct` | fits of the seed-mean cost at all 60 targets (the deterministic schedule); largest per-target seed spread of T | full / asymptotic / n/a | |
@@ -91,4 +90,4 @@ T*eps over converged rows, full range; `sem` is of log C), and the log-law membe
 `derived/cells.csv` (one row per cell, both windows, prefactor, acceptance), `derived/hwindow_summary.csv`,
 `derived/fisher.csv`, `tables/*.tex` (rows in the paper's column order: tab_prefactor, tab_error_detected,
 tab_combined, tab_sequential, tab_bare_within_model, tab_bare_fixed, tab_realistic_readout,
-tab_realistic_prep, tab_window), and `compare_v1.md` with `--compare v1` (flag rule: |diff| > 2 sqrt(sem_v2^2 + sem_v1^2)).
+tab_realistic_prep, tab_window).

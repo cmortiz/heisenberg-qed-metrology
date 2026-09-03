@@ -3,8 +3,8 @@
 Written from the theorem statements in ``sensing.tex`` (Eq. ``eq:Ukdef``, the
 decomposition ``eq:bitflip-decomp``, Theorem ``thm:bitflip``, Lemma
 ``lem:mapping``, Lemma ``lem:ghz-noise-marginalization``) and the public
-docstrings of ``eqsp/closed_forms.py``.  No legacy simulator and no engine
-kernel was consulted when this file was written.
+docstrings of ``eqsp/closed_forms.py``.  No engine kernel was consulted when
+this file was written.
 
 Circuit side (built here, never through ``closed_forms`` internals):
     GHZ by Hadamard + CNOT chain over every data wire (for the combined layout

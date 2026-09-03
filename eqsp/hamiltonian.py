@@ -1,32 +1,19 @@
 """JAX kernels for the Hamiltonian-noise likelihoods, plus float64 NumPy truth-side helpers.
 
-Two families:
+For odd N_code and an odd number of blocks the exact circuit likelihood is the
+classical mixture over the syndrome coset (closed_forms.ghz_code_probs_mixture):
 
-* Legacy-verbatim theorem-model kernels (Theorem thm:bitflip closed forms), lifted
-  from simulation_bare_hamiltonian.py (bh), simulation_error_detected.py (ed) and
-  simulation_combined.py (cb) after the closed-form check in
-  checks/check_kernels.py.  Bodies are unchanged except for two documented
-  repairs, the P_MAX clip (finding 8, NaN at p = 1) and the conjugation of the
-  bare fixed-N scan (finding 3); rows those repairs do not touch keep the
-  XLA fusion and float32 rounding of the committed CSVs (plan, legacy
-  convention 19).
+    P(s, +/-) = 1/2 [ prod_b A_b  +/-  V (1-2q)^N  Re prod_b Z_b ]
+    A_b = P_b(E_b) + P_b(Ebar_b)
+    Z_b = P_b(E_b) e^{2i Phi_b(E_b)} + P_b(Ebar_b) e^{2i Phi_b(Ebar_b)}
 
-* New exact-model kernels.  For odd N_code and an odd number of blocks the exact
-  circuit likelihood is the classical mixture over the syndrome coset
-  (closed_forms.ghz_code_probs_mixture):
+with P_b(x) = prod_{k in b} p_k^{x_k} (1-p_k)^{1-x_k} and Phi_b(x) = sum of
+phi_k over the qubits of b that are clean in x.  The q-aware estimator extends
+each block factor to a weighted sum over all 2^{N_code} patterns.  These kernels
+are computed in log space with a per-grid-point shift so that tiny P_b never
+underflow float32.
 
-      P(s, +/-) = 1/2 [ prod_b A_b  +/-  V (1-2q)^N  Re prod_b Z_b ]
-      A_b = P_b(E_b) + P_b(Ebar_b)
-      Z_b = P_b(E_b) e^{2i Phi_b(E_b)} + P_b(Ebar_b) e^{2i Phi_b(Ebar_b)}
-
-  with P_b(x) = prod_{k in b} p_k^{x_k} (1-p_k)^{1-x_k} and Phi_b(x) = sum of
-  phi_k over the qubits of b that are clean in x.  The theorem kernel keeps the
-  E_b term only.  The q-aware estimator extends each block factor to a weighted
-  sum over all 2^{N_code} patterns.  These kernels are computed in log space
-  with a per-grid-point shift so that tiny P_b never underflow float32.
-
-All kernels are float32 (jax_enable_x64 off) and take M as a traced float32
-(bh:186, ed:251, cb:348; legacy convention 21).
+All kernels are float32 (jax_enable_x64 off) and take M as a traced float32.
 """
 from __future__ import annotations
 
@@ -42,51 +29,20 @@ from jax.scipy.special import logsumexp
 
 from . import closed_forms as cf
 
-LIK_FLOOR = 1e-30      # sim:71, bh:121, ed:75, ed:89, cb:77, cb:95, cb:118
+LIK_FLOOR = 1e-30      # relative floor on a likelihood before log
 P_MAX = 1.0 - 1e-7     # upper clip of a syndrome probability: 1 - 1e-30 == 1 in float32, so p = 1 (reached where the
                        # prior window crosses omega = 0 and sin^2(M Omega) = 1) gave log(1 - p) = -inf and 0 * -inf = NaN
 HIGHEST = jax.lax.Precision.HIGHEST
 
 
 # ==========================================================================
-# Legacy-verbatim kernels: bare GHZ, fixed odd N (bh:58-124)
+# Bare GHZ at fixed odd N
 # ==========================================================================
 @jit
-def ghz_x_parity_grid(omega_grid, gammas, M_evol):
-    """<X^N>_GHZ over the omega grid, odd N (bh:58-88, verbatim)."""
-    # Shape: (grid_size, N)
-    Omega_k = jnp.sqrt(omega_grid[:, None]**2 + gammas[None, :]**2 + 1e-30)
-    MO = M_evol * Omega_k
-    ratio = omega_grid[:, None] / Omega_k
-    s = jnp.sin(MO)
-    alpha = 1.0 - 2.0 * ratio**2 * s**2
-    beta = 2.0 * ratio * s * jnp.cos(MO)  # sin(2 MO) * ratio / 1 = 2 sin(MO) cos(MO) ratio
-    # Complex product over qubits: prod_k (alpha_k - i beta_k)
-    re = alpha
-    im = -beta
-    # Accumulate product via log is numerically unstable (magnitudes near 1); do direct product.
-    # For N up to a few tens, direct complex product is fine.
-    def cplx_mul(carry, pair):
-        cr, ci = carry
-        pr, pi = pair
-        return (cr * pr - ci * pi, cr * pi + ci * pr)
-    init = (jnp.ones_like(omega_grid), jnp.zeros_like(omega_grid))
-    # scan over the qubit axis
-    pairs = (re.T, im.T)  # each shape (N, grid_size)
-    final, _ = jax.lax.scan(
-        lambda carry, p: (cplx_mul(carry, p), None),
-        init,
-        pairs,
-    )
-    return final[0]  # Re part
-
-
-@jit
 def ghz_x_parity_grid_complex(omega_grid, gammas, M_evol):
-    """(2, G) array [Re, Im] of prod_k (alpha_k - i beta_k) over the omega grid: the
-    GHZ coherence whose rotation by the preparation phase gives the exact-model
-    parity Re[e^{-i theta} prod_k(...)] (new kernel; same recurrence as
-    ghz_x_parity_grid)."""
+    """(2, G) array [Re, Im] of prod_k (A_k - i B_k) over the omega grid: the GHZ
+    coherence whose rotation by the preparation phase gives the parity
+    Re[e^{-i theta} prod_k(...)]."""
     Omega_k = jnp.sqrt(omega_grid[:, None]**2 + gammas[None, :]**2 + 1e-30)
     MO = M_evol * Omega_k
     ratio = omega_grid[:, None] / Omega_k
@@ -98,9 +54,9 @@ def ghz_x_parity_grid_complex(omega_grid, gammas, M_evol):
         cr, ci = carry
         pr, pi = pair
         return (cr * pr - ci * pi, cr * pi + ci * pr)
-    # Legacy beta = -B of closed_forms.bare_bloch (U^dag X U = A X + B Y + C Z): the legacy scan over
-    # (alpha, -beta) therefore builds the conjugate of prod_k (A_k - i B_k), harmless for the real
-    # part at theta = 0 but wrong for the rotated parity.  Use (alpha, +beta) = (A, -B).
+    # (alpha, beta) = (A, -B) of closed_forms.bare_bloch (U^dag X U = A X + B Y + C Z), so the scan
+    # builds prod_k (A_k - i B_k); the conjugate would be harmless for the real part at theta = 0 but
+    # wrong for the rotated parity.
     init = (jnp.ones_like(omega_grid), jnp.zeros_like(omega_grid))
     final, _ = jax.lax.scan(lambda carry, p: (cplx_mul(carry, p), None), init, (alpha.T, beta.T))
     return jnp.stack([final[0], final[1]])
@@ -108,7 +64,7 @@ def ghz_x_parity_grid_complex(omega_grid, gammas, M_evol):
 
 @jit
 def bare_parity_update_theta(logpk, coh, theta, log_vis, outcome):
-    """Exact-model bare update, odd N: P(+ | omega) = (1 + e^{log_vis} Re[e^{-i theta} Z])/2
+    """Bare update, odd N: P(+ | omega) = (1 + e^{log_vis} Re[e^{-i theta} Z])/2
     with Z = coh[0] + i coh[1] from ghz_x_parity_grid_complex."""
     x = jnp.exp(log_vis) * (coh[0] * jnp.cos(theta) + coh[1] * jnp.sin(theta))
     sign = jnp.where(outcome == 0, 1.0, -1.0)
@@ -119,102 +75,21 @@ def bare_parity_update_theta(logpk, coh, theta, log_vis, outcome):
 
 
 def nyquist_cap(m: int, N: int, period: float) -> int:
-    """Largest depth M such that the grid resolves the M-th fringe: legacy rule
-    2^(m-2) // N on a 2 pi grid (bh:146, ed:163, cb:210), generalised to a prior
-    window of width ``period``: pi 2^m / (2 N period)."""
+    """Largest depth M such that the grid resolves the M-th fringe:
+    pi 2^m / (2 N period) on a prior window of width ``period`` (2^(m-2) // N on
+    a 2 pi grid)."""
     return max(1, int(math.pi * 2**m / (2.0 * N * period)))
 
 
-@jit
-def ghz_x_parity_true(omega, gammas, M_evol):
-    """Scalar <X^N>_GHZ at the true omega, float32 (bh:91-113, verbatim; legacy convention 10)."""
-    Omega_k = jnp.sqrt(omega**2 + gammas**2 + 1e-30)
-    MO = M_evol * Omega_k
-    ratio = omega / Omega_k
-    s = jnp.sin(MO)
-    alpha = 1.0 - 2.0 * ratio**2 * s**2
-    beta = 2.0 * ratio * s * jnp.cos(MO)
-    re = alpha
-    im = -beta
-    # Product over qubits
-    def cplx_mul(carry, pair):
-        cr, ci = carry
-        pr, pi = pair
-        return (cr * pr - ci * pi, cr * pi + ci * pr)
-    init = (jnp.float32(1.0), jnp.float32(0.0))
-    final, _ = jax.lax.scan(
-        lambda carry, p: (cplx_mul(carry, p), None),
-        init,
-        (re, im),
-    )
-    return final[0]
-
-
-@jit
-def bare_parity_update(logpk, x_parity_grid, outcome):
-    """Log-space update with P(+1 | omega) = (1 + <X^N>)/2 (bh:116-124, verbatim)."""
-    sign = jnp.where(outcome == 0, 1.0, -1.0)
-    likelihood = (1.0 + sign * x_parity_grid) / 2.0
-    log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
-    logpk = logpk + log_lik
-    logpk = logpk - logsumexp(logpk)
-    return logpk
-
-
-@jit
-def bare_parity_update_vis(logpk, x_parity_grid, outcome, log_visibility):
-    """bare_parity_update with an inference visibility exp(log_visibility) on
-    <X^N> (aware estimator: (1-2q)^N k^(N-1) F).  New kernel."""
-    sign = jnp.where(outcome == 0, 1.0, -1.0)
-    likelihood = (1.0 + sign * jnp.exp(log_visibility) * x_parity_grid) / 2.0
-    log_lik = jnp.log(jnp.maximum(likelihood, LIK_FLOOR))
-    logpk = logpk + log_lik
-    return logpk - logsumexp(logpk)
-
-
 # ==========================================================================
-# Legacy-verbatim kernels: ED (ed:68-127)
+# Homogeneous single-block grids (ED)
 # ==========================================================================
-@jit
-def phase_update(logpk, phi_eff_grid, outcome):
-    """P(v | omega, syndrome) = (1 + sign cos(2 phi_eff))/2 (ed:68-78 == cb:70-80, verbatim)."""
-    sign = jnp.where(outcome == 0, 1.0, -1.0)
-    cos_val = jnp.cos(2.0 * phi_eff_grid)
-    likelihood = (1.0 + sign * cos_val) / 2.0
-    log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
-    logpk = logpk + log_lik
-    logpk = logpk - logsumexp(logpk)
-    return logpk
-
-
-@jit
-def syndrome_update_homogeneous(logpk, p_k_grid, d, N_code):
-    """log P(d | omega, M) = d log p + (N-d) log(1-p) + const (ed:81-93; verbatim except the P_MAX clip, finding 8)."""
-    p_safe = jnp.clip(p_k_grid, 1e-30, P_MAX)
-    log_lik = d * jnp.log(p_safe) + (N_code - d) * jnp.log(1.0 - p_safe)
-    logpk = logpk + log_lik
-    logpk = logpk - logsumexp(logpk)
-    return logpk
-
-
-@jit
-def p_grid_homogeneous(omega_grid, gamma, M_evol):
-    """p_k(omega) on the grid, homogeneous gamma (ed:96-103, verbatim)."""
-    Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
-    M_Omega = M_evol * Omega
-    sin2 = jnp.sin(M_Omega) ** 2
-    ratio2 = omega_grid ** 2 / (omega_grid ** 2 + gamma ** 2 + 1e-30)
-    return sin2 * (1.0 - ratio2)
-
-
 @jit
 def p_grid_homogeneous_exact(omega_grid, gamma, M_evol):
-    """p_k(omega) on the grid without the float32 cancellation of the legacy
-    form: 1 - omega^2/Omega^2 is a float32 cancellation of two numbers near 1,
-    and where p < 1e-7 it misses p by up to 2% (measured by checks/check_kernels.py,
-    check B4x, against the float64 closed form).  Used by the exact model; the
-    theorem model keeps p_grid_homogeneous because the plan's legacy convention
-    10 preserves the legacy grid-side rounding for the regression diagnostic."""
+    """p_k(omega) = sin^2(M Omega) gamma^2 / Omega^2 on the grid, written so that
+    float32 does not cancel: the algebraically equal form sin^2 (1 - omega^2/Omega^2)
+    subtracts two numbers near 1 and, where p < 1e-7, misses p by up to 2%
+    (measured against the float64 closed form)."""
     Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
     M_Omega = M_evol * Omega
     sin2 = jnp.sin(M_Omega) ** 2
@@ -222,21 +97,8 @@ def p_grid_homogeneous_exact(omega_grid, gamma, M_evol):
 
 
 @jit
-def phi_eff_grid_ed(omega_grid, gammas, M_evol):
-    """phi_eff = sum_k phi_k over the grid, d = 0 (ed:106-116, verbatim)."""
-    Omega_k = jnp.sqrt(omega_grid[:, None]**2 + gammas[None, :]**2 + 1e-30)
-    M_Omega_k = M_evol * Omega_k
-    # sin/cos form avoids tan overflow near poles
-    c = jnp.cos(M_Omega_k)
-    s = jnp.sin(M_Omega_k)
-    sign_c = jnp.where(c >= 0, 1.0, -1.0)
-    phi_k = jnp.arctan2(sign_c * s * omega_grid[:, None], sign_c * Omega_k * c)
-    return jnp.sum(phi_k, axis=1)
-
-
-@jit
 def phi_grid_homogeneous(omega_grid, gamma, M_evol):
-    """Single-qubit phi over the grid, homogeneous (ed:119-127, verbatim)."""
+    """Single-qubit phi over the grid, homogeneous gamma."""
     Omega = jnp.sqrt(omega_grid**2 + gamma**2 + 1e-30)
     M_Omega = M_evol * Omega
     c = jnp.cos(M_Omega)
@@ -246,25 +108,11 @@ def phi_grid_homogeneous(omega_grid, gamma, M_evol):
 
 
 # ==========================================================================
-# Legacy-verbatim kernels: combined (cb:84-163)
+# Per-qubit grids (combined: per-qubit offsets omega + eps_k)
 # ==========================================================================
 @jit
-def phase_update_vis(logpk, phi_eff_grid, outcome, log_visibility):
-    """P(v | omega) = (1 + sign lambda cos(2 Phi_eff))/2, lambda = exp(log_visibility)
-    (cb:84-97 bayesian_update_marg, verbatim).  Also carries the aware-estimator
-    visibility log((1-2q)^N k^(N-1) F) for theorem-model runs."""
-    sign = jnp.where(outcome == 0, 1.0, -1.0)
-    cos_val = jnp.cos(2.0 * phi_eff_grid) * jnp.exp(log_visibility)
-    likelihood = (1.0 + sign * cos_val) / 2.0
-    log_lik = jnp.log(jnp.maximum(likelihood, 1e-30))
-    logpk = logpk + log_lik
-    logpk = logpk - logsumexp(logpk)
-    return logpk
-
-
-@jit
 def p_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
-    """Per-qubit p_k(omega_j + eps_k) over the grid, (G, N_total) (cb:100-108, verbatim)."""
+    """Per-qubit p_k(omega_j + eps_k) over the grid, (G, N_total)."""
     omega_k = omega_grid[:, None] + epsilons[None, :]
     Omega_k = jnp.sqrt(omega_k**2 + gammas[None, :]**2 + 1e-30)
     M_Omega_k = M_evol * Omega_k
@@ -274,34 +122,8 @@ def p_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
 
 
 @jit
-def syndrome_update_per_qubit(logpk, p_k_per_qubit_grid, error_mask):
-    """Per-qubit Bernoulli syndrome factor (cb:111-123; verbatim except the P_MAX clip, finding 8)."""
-    p_safe = jnp.clip(p_k_per_qubit_grid, 1e-30, P_MAX)
-    log_lik = error_mask[None, :] * jnp.log(p_safe) + (1.0 - error_mask[None, :]) * jnp.log(1.0 - p_safe)
-    log_lik_sum = jnp.sum(log_lik, axis=1)
-    logpk = logpk + log_lik_sum
-    logpk = logpk - logsumexp(logpk)
-    return logpk
-
-
-@jit
-def phi_eff_grid_cb(omega_grid, gammas, epsilons, M_evol):
-    """d = 0 Phi_eff(omega_j) = sum_k phi_k(omega_j + eps_k), (G,) (cb:126-138, verbatim)."""
-    # Per-qubit omega_k = omega_j + epsilon_k: (G,1) + (1,N_total) -> (G, N_total)
-    omega_k = omega_grid[:, None] + epsilons[None, :]
-    Omega_k = jnp.sqrt(omega_k**2 + gammas[None, :]**2 + 1e-30)
-    M_Omega_k = M_evol * Omega_k
-    # sin/cos form avoids tan overflow near pi/2 poles
-    c = jnp.cos(M_Omega_k)
-    s = jnp.sin(M_Omega_k)
-    sign_c = jnp.where(c >= 0, 1.0, -1.0)
-    phi_k = jnp.arctan2(sign_c * s * omega_k, sign_c * Omega_k * c)
-    return jnp.sum(phi_k, axis=1)
-
-
-@jit
 def phi_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
-    """Per-qubit phi_k(omega_j + eps_k), (G, N_total) (cb:141-150, verbatim)."""
+    """Per-qubit phi_k(omega_j + eps_k), (G, N_total)."""
     omega_k = omega_grid[:, None] + epsilons[None, :]
     Omega_k = jnp.sqrt(omega_k**2 + gammas[None, :]**2 + 1e-30)
     M_Omega_k = M_evol * Omega_k
@@ -311,16 +133,8 @@ def phi_grid_per_qubit(omega_grid, gammas, epsilons, M_evol):
     return jnp.arctan2(sign_c * s * omega_k, sign_c * Omega_k * c)
 
 
-@jit
-def phi_eff_with_errors(phi_per_qubit, error_mask):
-    """phi_eff = sum_{k clean} phi_k = sum_k phi_k - sum_{errored k} phi_k (cb:153-163, verbatim)."""
-    phi_eff_d0 = jnp.sum(phi_per_qubit, axis=1)
-    correction = phi_per_qubit @ error_mask
-    return phi_eff_d0 - correction
-
-
 # ==========================================================================
-# New kernels: exact model (odd N_code, odd block count)
+# Exact-model updates (odd N_code, odd block count)
 # ==========================================================================
 def _finish(logpk, shift, A, Zre, log_vis, outcome):
     sign = jnp.where(outcome == 0, 1.0, -1.0)
@@ -334,12 +148,12 @@ def _finish(logpk, shift, A, Zre, log_vis, outcome):
 
 @jit
 def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome, theta=0.0):
-    """Exact-model ED update, homogeneous block of N = len(logc) - 1 qubits.
+    """ED update, homogeneous block of N = len(logc) - 1 qubits.
 
     Block factors summed over pattern weight w = 0..N with log coefficients
-    ``logc`` (float32, -inf excluded):  plain exact model logc = 0 at w in
-    {d, N-d}; q-aware estimator logc[w] = log sum_{|x|=w} q^{d_H(s_obs, dx)}
-    (1-q)^{N-1-d_H}; theorem-model q-aware additionally masks w > L.
+    ``logc`` (float32, -inf excluded): the mismatched estimator sets logc = 0 at
+    w in {d, N-d} (the two coset members); the q-aware estimator sets
+    logc[w] = log sum_{|x|=w} q^{d_H(s_obs, dx)} (1-q)^{N-1-d_H}.
     log_vis = log of the inference visibility on the coherent term; theta the
     per-shot preparation phase (cos(2 Phi - theta)).
     """
@@ -358,9 +172,9 @@ def exact_ed_update(logpk, p_grid, phi_grid, logc, log_vis, outcome, theta=0.0):
 
 @jit
 def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, outcome, theta=0.0):
-    """Exact-model update for B contiguous blocks of N_code qubits (combined).
+    """Update for B contiguous blocks of N_code qubits (combined).
 
-    p_grid, phi_grid: (G, B*N_code) per-qubit grids (cb precomputes).
+    p_grid, phi_grid: (G, B*N_code) per-qubit grids.
     X: (B, P, N_code) float32 patterns per block (P = 2: E_b and its complement;
        q-aware: all 2^N_code patterns).  logw: (B, P) float32 log weights
        (-inf excludes a pattern).  marg_coef = 2 M^2 sigma^2 damps each
@@ -397,7 +211,7 @@ def exact_blocks_update(logpk, p_grid, phi_grid, X, logw, log_vis, marg_coef, ou
 
 
 # ==========================================================================
-# New kernel: bare GHZ, adaptive n, fixed-point angle (plan, 'Precision')
+# Bare GHZ, adaptive n, fixed-point angle
 # ==========================================================================
 def bare_adaptive_tables(m: int, gamma: float, omega=None):
     """Float64 setup for the fixed-point bare-adaptive kernel on the [0, pi) grid
@@ -428,12 +242,11 @@ def bare_adaptive_tables(m: int, gamma: float, omega=None):
 @jit
 def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcome, theta=0.0):
     """P(+ | omega_j) = (1 + e^{log_ro} [e^{log_V} r_j^n cos(n psi_j - theta) + [n even] C_j^n])/2,
-    theta the per-shot preparation phase (0 in the legacy model).
+    theta the per-shot preparation phase.
 
     The angle n theta_j is computed mod 2pi in 48-bit fixed point (three 16-bit
-    limbs, n <= 2^14, all products < 2^31 exact).  At gamma = 0 the angle
-    expression equals the legacy integer-mod angle sim:68-69 bitwise (checked in
-    checks/check_kernels.py).  log_ro = n log(1-2q) scales the whole parity
+    limbs, n <= 2^14, all products < 2^31 exact); at gamma = 0 this is the exact
+    integer-mod angle.  log_ro = n log(1-2q) scales the whole parity
     (readout flips); log_V = log(k^(n-1) F) scales only the coherent term (a
     dephased GHZ keeps the even-n population term C^n); both 0 for the
     mismatched estimator."""
@@ -456,7 +269,7 @@ def bare_adaptive_update(logpk, q0, q1, q2, logr, logC, n, log_ro, log_V, outcom
 
 
 # ==========================================================================
-# New kernel: Heisenberg window
+# Heisenberg window
 # ==========================================================================
 @jit
 def hwindow_update(logpk, xs, N, log_lambda, theta, outcome):
@@ -471,48 +284,9 @@ def hwindow_update(logpk, xs, N, log_lambda, theta, outcome):
 # ==========================================================================
 # Float64 NumPy truth-side helpers
 # ==========================================================================
-def legacy_params_ed(omega_true, gammas, M_evols):
-    """Batched (p_k, phi_k) exactly as ed:184-200: p = sin^2 (1 - omega^2/(omega^2+gamma^2+1e-30))."""
-    M_evols_col = np.asarray(M_evols, np.float64)[:, None]
-    gammas_row = np.asarray(gammas, np.float64)[None, :]
-    Omega_k_all = np.sqrt(omega_true**2 + gammas_row**2)
-    M_Omega_k_all = M_evols_col * Omega_k_all
-    sin2_all = np.sin(M_Omega_k_all)**2
-    denom_all = omega_true**2 + gammas_row**2 + 1e-30
-    ratio2_all = omega_true**2 / denom_all
-    p_k_all = sin2_all * (1.0 - ratio2_all)
-    c_all = np.cos(M_Omega_k_all)
-    s_all = np.sin(M_Omega_k_all)
-    sign_c_all = np.where(c_all >= 0, 1.0, -1.0)
-    phi_k_all = np.arctan2(sign_c_all * s_all * omega_true, sign_c_all * Omega_k_all * c_all)
-    return p_k_all, phi_k_all
-
-
-def legacy_params_cb(omegas, gammas, M_evols):
-    """Batched (p_k, phi_k) exactly as cb:249-264 (quenched) with per-qubit omegas:
-    p = sin^2 gamma^2/(omega^2+gamma^2+1e-30).  Also matches the per-shot form
-    cb:287-298 when omegas has a leading shot axis."""
-    omegas = np.asarray(omegas, np.float64)
-    if omegas.ndim == 1:
-        omegas_row = omegas[None, :]
-    else:
-        omegas_row = omegas
-    M_evols_col = np.asarray(M_evols, np.float64)[:, None]
-    gammas_row = np.asarray(gammas, np.float64)[None, :]
-    Omega_k_all = np.sqrt(omegas_row**2 + gammas_row**2)
-    M_Omega_k_all = M_evols_col * Omega_k_all
-    sin2_all = np.sin(M_Omega_k_all)**2
-    denom_all = omegas_row**2 + gammas_row**2 + 1e-30
-    p_k_all = sin2_all * (gammas_row**2 / denom_all)
-    c_all = np.cos(M_Omega_k_all)
-    s_all = np.sin(M_Omega_k_all)
-    sign_c_all = np.where(c_all >= 0, 1.0, -1.0)
-    phi_k_all = np.arctan2(sign_c_all * s_all * omegas_row, sign_c_all * Omega_k_all * c_all)
-    return p_k_all, phi_k_all
-
-
 def exact_params(omegas, gammas, M_evols):
-    """Batched exact-model (p_k, phi_k) from closed_forms.bitflip_params; shapes as legacy_params_cb."""
+    """Batched (p_k, phi_k) from closed_forms.bitflip_params.  ``omegas`` is (N,)
+    or (S, N); ``M_evols`` is (S,); returns two (S, N) arrays."""
     omegas = np.asarray(omegas, np.float64)
     omegas_row = omegas[None, :] if omegas.ndim == 1 else omegas
     M_col = np.asarray(M_evols, np.float64)[:, None]
@@ -577,26 +351,23 @@ def all_patterns(Nc):
     return ((idx[:, None] >> np.arange(Nc)[None, :]) & 1).astype(bool)
 
 
-def pattern_log_weights(s_obs_block, q, Nc, theorem_L=None):
+def pattern_log_weights(s_obs_block, q, Nc):
     """q-aware log weights for all 2^Nc patterns of one block given its observed
-    syndrome bits (S, Nc-1): log[q^{d_H}(1-q)^{Nc-1-d_H}], shape (S, 2^Nc).
-    theorem_L: mask patterns of weight > L to -inf (theorem-model q-aware)."""
+    syndrome bits (S, Nc-1): log[q^{d_H}(1-q)^{Nc-1-d_H}], shape (S, 2^Nc)."""
     X = all_patterns(Nc)                                   # (P, Nc)
     syn = (X[:, :-1] ^ X[:, 1:]).astype(np.int64)         # (P, Nc-1)
     s = np.asarray(s_obs_block, np.int64)                  # (S, Nc-1)
     dH = np.sum(syn[None, :, :] != s[:, None, :], axis=2)  # (S, P)
     with np.errstate(divide="ignore"):
         logw = dH * np.log(q) + (Nc - 1 - dH) * np.log1p(-q)
-    if theorem_L is not None:
-        logw = np.where(X.sum(1)[None, :] > theorem_L, -np.inf, logw)
     return logw
 
 
-def weight_log_coeffs(s_obs_block, q, Nc, theorem_L=None):
+def weight_log_coeffs(s_obs_block, q, Nc):
     """ED q-aware coefficients by pattern weight: log sum_{|x|=w} q^{d_H}(1-q)^{Nc-1-d_H},
     shape (S, Nc+1) (homogeneous block, so only the weight matters on the grid)."""
     X = all_patterns(Nc)
-    logw = pattern_log_weights(s_obs_block, q, Nc, theorem_L)     # (S, P)
+    logw = pattern_log_weights(s_obs_block, q, Nc)               # (S, P)
     wts = X.sum(1)
     out = np.full((logw.shape[0], Nc + 1), -np.inf)
     for w in range(Nc + 1):
@@ -608,7 +379,7 @@ def weight_log_coeffs(s_obs_block, q, Nc, theorem_L=None):
 
 
 def bare_parity_batch(omega, gamma, M, ns, thetas=0.0):
-    """(coherent, population) parts of the exact bare parity for an int array ns
+    """(coherent, population) parts of the bare parity for an int array ns
     (float64): r^n cos(n psi - theta) and [n even] C^n.  <X^n> = V * coherent + population
     under a dephased GHZ of visibility V (closed_forms.bare_parity_prob)."""
     r, psi, C = cf.bare_polar(omega, gamma, M)

@@ -4,12 +4,11 @@ offsets redrawn per shot, single target eps_tar (plan, Per-protocol mapping).
 Truth: P(+) = (1 + cos(2 (N omega + S_i) - theta_i))/2 with S_i ~ N(0, sigma^2 N)
 the realized offset sum and theta_i ~ U[0, 2pi) a per-shot readout phase.
 Inference: (1 + lambda_N cos(2 N omega - theta_i))/2, lambda_N = e^{-2 N sigma^2}
-(sensing.tex:1305, :1335).  Grid on one period [0, pi/N) with the truth wrapped
-and period-pi/N circular error; RNG stream_rng(seed, eps_tar, N) with draw order
-S, thetas, uniforms.  Under the posterior stop the device-side loop checks the
-stopping rule after every update (T(N) resolution; a coarser cadence would
-quantise T near the resource minimum at N*/2); the legacy host loop
-(``--stop legacy``) checks every 10 shots.
+(sensing.tex, Heisenberg-window section).  Grid on one period [0, pi/N) with the
+truth wrapped and period-pi/N circular error; RNG stream_rng(seed, eps_tar, N)
+with draw order S, thetas, uniforms.  The device-side loop checks the stopping
+rule after every update (T(N) resolution; a coarser cadence would quantise T
+near the resource minimum at N*/2).
 """
 from __future__ import annotations
 
@@ -25,7 +24,7 @@ from jax import lax
 from .. import closed_forms as cf
 from .. import hamiltonian as H
 from ..config import OMEGA_TRUE, EngineConfig, RunSpec
-from ..engine import Shot, check_due, make_grid, posterior_stats
+from ..engine import Shot, make_grid, posterior_stats
 from ..io import stream_rng
 
 GRID_M = 16
@@ -53,7 +52,6 @@ def run_chunk_kernel(logpk, xs, N, log_lambda, thetas, outcomes, i0, omega_true,
 
 class HWindow:
     grid_builder = "np64"
-    family = "ham"
 
     def __init__(self, spec: RunSpec):
         if spec.N_fixed is None or spec.eps_tar is None:
@@ -64,7 +62,7 @@ class HWindow:
         self.N = int(spec.N_fixed)
         self.sigma = float(spec.sigma)
         self.period = float(np.pi / self.N)
-        self.cfg = EngineConfig(stop=spec.stop, max_experiments=2_000_000, check_every=10, check_counter="round0")
+        self.cfg = EngineConfig(max_experiments=2_000_000)
         # The prior is one period pi/N wide and the error is period-pi/N circular, so a
         # target with 1.2 eps_tar comparable to pi/(2N) converges trivially.  Require a
         # factor 20 between period and tolerance: the suite's eps_tar = 2e-2/N_* (suite.py WINDOW_EPS) gives
@@ -120,7 +118,7 @@ class HWindow:
     def account(self, shot: Shot, ctr) -> None:
         ctr.sum_M_sq += 1.0
 
-    # --- device-side chunked loop (engine uses it when present and stop == "posterior") ---
+    # --- device-side chunked loop (the engine uses it whenever an adapter defines it) ---
     chunk = CHUNK
 
     def run_chunk(self, logpk, i0: int, B: int, omega_true, stop_std: float):
@@ -134,9 +132,6 @@ class HWindow:
         ctr.n_accepted += n_done
         ctr.sum_M_sq += float(n_done)
         ctr.M_exec_max = max(ctr.M_exec_max, 1)
-
-    def check_due(self, i: int, ctr) -> bool:
-        return check_due(self.cfg, i, ctr)
 
     def row(self, ctr, converged: bool, error: float) -> dict:
         return {"N": self.N, "M_max": 1, "grid_m": self.m, "visibility": math.exp(-2.0 * self.N * self.sigma**2)}

@@ -6,6 +6,10 @@ engine, six protocol adapters, one runner, one analyzer, one plotter. Every numb
 printed in the paper's numerics section is a key in `results/v2/numbers.json`
 written by `scripts/analyze.py`; see `DATA.md` for the element-by-element map.
 
+Every row behind the paper is produced with the exact circuit likelihood (the
+coset mixture of `eqsp/closed_forms.py`) and the truth-free posterior stopping
+rule described below. There is no other model or stopping rule in the code.
+
 ## Install
 
 Python 3.12 via [uv](https://docs.astral.sh/uv/); never `pip`.
@@ -22,12 +26,12 @@ first JAX import. All commands below run from this directory.
 
 ```
 pyproject.toml                  deps numpy, pandas, scipy, matplotlib, tqdm, jax>=0.9; extras cuda, test
-eqsp/config.py                  EngineConfig, RunSpec (gamma, h, L, sigma, inference, marg, q, k, F, estimator, model),
+eqsp/config.py                  EngineConfig, RunSpec (gamma, L, sigma, inference, marg, q, k, F, estimator),
                                 OMEGA_TRUE = 0.3, epsilon_grid, grid_resolution, window_N_grid, CSV_COLUMNS, GROUP_KEYS
 eqsp/io.py                      eps_rng / seed_rng / stream_rng, config_key, shard_path, make_row, write_rows (flock), git_short_sha
-eqsp/engine.py                  make_grid, init_log_posterior, log_update, map_error, GridCache, Counters, run_epsilon, run_seed(s)
+eqsp/engine.py                  make_grid, init_log_posterior, log_update, posterior_stats, GridCache, Counters, run_epsilon, run_seed(s)
 eqsp/closed_forms.py            float64 NumPy reference likelihoods (the physics contract; see below)
-eqsp/hamiltonian.py             float32 JAX kernels: legacy-verbatim theorem kernels and the new exact-model kernels
+eqsp/hamiltonian.py             float32 JAX kernels for the likelihoods and the float64 truth-side helpers
 eqsp/fit.py                     the one OLS alpha fit (two windows), prefactor, window shift, converged %
 eqsp/protocols/bare_adaptive.py bare GHZ, Hamiltonian noise, N = clip(floor(1/eps), 10, 16384), n ~ U{1..N}, M = 1
 eqsp/protocols/bare_fixed.py    bare GHZ, Hamiltonian noise, fixed odd N = 2L+1, M ~ U{1..M_max}
@@ -36,16 +40,13 @@ eqsp/protocols/combined.py      logical GHZ over three blocks, per-qubit offsets
 eqsp/protocols/sequential.py    sequential binary search with product-state probes (NumPy only)
 eqsp/protocols/hwindow.py       Heisenberg-window sweep T(N) at fixed eps_tar with shot-to-shot offsets
 scripts/run.py                  CLI: one protocol, one or more seeds, one shard per seed
-scripts/suite.py                suite table (groups 1-8), GPU and CPU pools, resume, --quick, --dry-run, --merge
-scripts/analyze.py              cells.csv, numbers.json, tables/*.tex, fisher.csv, hwindow_summary.csv, compare_v1.md
+scripts/suite.py                suite table (groups 1-8), GPU and CPU pools, resume, --quick, --dry-run, --merge, --stamp-engine-version
+scripts/analyze.py              cells.csv, numbers.json, tables/*.tex, fisher.csv, hwindow_summary.csv
 scripts/plot.py                 paper figures; every printed alpha read from numbers.json
 scripts/paper_numbers.py        fills the paper's \NUM{key} placeholders from numbers.json
-scripts/results/                committed v1 data (legacy CSVs) plus the v1 numbers.json, tables/, derived/
 results/numbers_schema.md       numbers.json key grammar (source of truth for key names)
 results/v2/                     suite output: shards/ (gitignored), <protocol>.csv, numbers.json, tables/, derived/
-tests/                          conftest.py, test_closed_forms_pennylane.py, test_rng_streams.py, test_engine.py, test_regression.py
-checks/                         one-off kernel and legacy spot checks (check_kernels.py, spot_check_*.py); not tests
-archive/                        local provenance only (gitignored)
+tests/                          conftest.py, test_closed_forms_pennylane.py, test_rng_streams.py, test_engine.py
 ```
 
 ## Physics
@@ -57,13 +58,13 @@ an $X^{\otimes N}$ parity readout. `tests/test_closed_forms_pennylane.py` checks
 functions against an independent PennyLane state-vector circuit; the float32 JAX
 kernels in `eqsp/hamiltonian.py` must agree with them.
 
-- **Repetition-code GHZ (ED, combined), `model=exact` (default).** The exact circuit
-  likelihood is a classical mixture over the two error patterns consistent with each
-  block's syndrome (the pattern and its logical-X coset partner, relative probability
-  weight $(p/(1-p))^{N-2d}$), `ghz_code_probs` / `ghz_code_probs_mixture`.
-- **`model=theorem`.** Reproduces the closed form of Theorem `thm:bitflip` and the
-  legacy simulators (minimum-weight pattern only), `ghz_code_probs_theorem`. Used
-  by the regression diagnostic; not for production numbers.
+- **Repetition-code GHZ (ED, combined).** The exact circuit likelihood is a classical
+  mixture over the two error patterns consistent with each block's syndrome (the
+  minimum-weight pattern and its logical-X coset partner, relative probability weight
+  $(p/(1-p))^{N-2d}$), `ghz_code_probs` / `ghz_code_probs_mixture`. Theorem
+  `thm:bitflip` states the closed form that keeps the minimum-weight term only
+  (`ghz_code_probs_theorem`); it is a building block of the mixture, and
+  `tests/test_closed_forms_pennylane.py` tabulates the gap between the two.
 - **Bare GHZ parity.** $P(\pm) = \tfrac12\,[1 \pm (r^n \cos n\theta + [n\ \text{even}]\, C^n)]$,
   `bare_parity`; the even-$n$ population term $C^n$ is kept.
 - **Readout flips.** Each measured bit flips with probability $q$; the parity
@@ -88,45 +89,29 @@ kernels in `eqsp/hamiltonian.py` must agree with them.
    estimator, $(|0\cdots0\rangle + e^{-i\theta_i}|1\cdots1\rangle)/\sqrt2$, so the
    parity likelihood is $\propto \cos(2\Phi - \theta_i)$ and the sign of the phase is
    identifiable. Fixed-axis parity alone is even in the phase and $\pi/N$-periodic up
-   to $O(\gamma^2/\Omega^2)$ amplitude terms, so the legacy $[0, 2\pi)$ prior carried
-   near-degenerate mirror modes (v1 non-converged `bare_hamiltonian` rows cluster at
-   discrete errors: $3.138 \approx \pi$ (the parity mirror at $\omega + \pi$) and
-   $2.095 = 2\pi/3$, $1.257 = 2\pi/5$, $0.449 = \pi/7$, multiples of the $\pi/N$ period at
-   $N = 3, 5, 7$) and the v1 depolarizing bare
-   likelihood $\cos(2n\omega)$ was exactly bimodal on $[0, \pi)$; the truth-based
-   legacy stop masked both (finding 2026-09-02). `model=theorem` keeps the legacy
-   grids and no phase for the regression diagnostic.
+   to $O(\gamma^2/\Omega^2)$ amplitude terms, so a wider prior carries near-degenerate
+   mirror modes (`tests/test_engine.py::test_map_error_bimodal_pi_periodic_posterior`).
 2. Per-target RNG stream `default_rng(seed + int(eps*1e8) % 2**31)` (`eps_rng`);
-   new draws (readout, prep, hwindow) use `stream_rng(seed, eps, *extra)` and are
-   appended after the legacy draws, so `q = 0, k = F = 1` reproduces legacy streams.
-3. Stopping rule (`--stop posterior`, the default for every Bayesian protocol):
-   after every accepted update the engine computes the posterior circular std
-   about the MAP and stops when the 95% credible half-width `2 * std <= eps`.
-   The run is `converged` iff the MAP circular error at that stop is `< 1.2 * eps`.
-   The rule never reads the truth, so `T` is what a real experiment would spend.
+   `hwindow` uses `stream_rng(seed, eps, N)`. The draw order per adapter is fixed
+   and tested in `tests/test_rng_streams.py`: the readout and preparation draws come
+   last, so `q = 0, k = F = 1` leaves the earlier arrays untouched.
+3. Stopping rule: after every accepted update the engine computes the posterior
+   circular std about the MAP and stops when the 95% credible half-width
+   `2 * std <= eps`. The run is `converged` iff the MAP circular error at that stop
+   is `< 1.2 * eps`. The rule never reads the truth, so `T` is what a real experiment
+   would spend, and it does not depend on how often an estimate is inspected.
    Exhausting `max_experiments` (10000 bare_adaptive, 50000 bare_fixed/ed/combined,
-   2000000 hwindow) is never "converged". `posterior_std` at the stop is a CSV
-   column. `--stop legacy` reproduces the v1 scripts: stop at the first cadence
-   check (item 5) whose truth-based MAP error is `< 1.2 * eps`. The legacy rule
-   stops on lucky MAP hits while the posterior is still wide (in v1 `bare_fixed`
-   at gamma = 0.10, 91% of runs stop at the first check), which makes `T` depend
-   on the check cadence and biases the prefactor comparison between protocols
-   with different cadences. It is kept only for the regression diagnostic
-   (`tests/test_regression.py`, `checks/`), keyed `..._legacy` in the shard name.
+   2000000 hwindow) is never "converged". `posterior_std` at the stop is a CSV column.
 4. Grid rule `m = max(16, ceil(log2(4 N floor(1/eps_min))))` (`grid_resolution`) for
    `bare_fixed`, `ed`, `combined`; `m = 16` for `bare_adaptive` and `hwindow`.
-5. Legacy check cadence (`--stop legacy` only): `bare_adaptive` every 100 rounds
-   including round 0; `bare_fixed` every 100 rounds from round 1; FL every 10
-   updates; PS every 100 accepted shots; `hwindow` every 10 shots (its posterior-stop
-   device loop checks every update). Rejected rounds are
-   charged but never update or check, under either rule.
+5. A rejected shot (post-selection on a non-trivial observed syndrome) is charged its
+   resources but never updates the posterior and never tests the stopping rule.
 
-Numerical guard (finding of the v2 full run): a syndrome probability is clipped to `[1e-30, P_MAX]` with
+Numerical guard: a syndrome probability is clipped to `[1e-30, P_MAX]` with
 `P_MAX = 1 - 1e-7` before `log(1 - p)`. The earlier `1 - 1e-30` is a no-op in float32, and where the prior
 window crosses omega = 0 (ED with N <= 5) `p = sin^2(M Omega) gamma^2 / Omega^2` reaches exactly 1, so the
 w = N term produced `0 * (-inf) = NaN` and a NaN posterior (36 exhausted rows at gamma = 0.10, L <= 2,
-eps <= 1.8e-4; rerun after the fix). Rows without a saturated grid point are bitwise unchanged.
-
+eps <= 1.8e-4; those cells were rerun after the fix). Rows without a saturated grid point are bitwise unchanged.
 
 ## Suite (`scripts/suite.py --dry-run`)
 
@@ -174,14 +159,23 @@ default (`--cpu-protocols`). Without GPUs everything runs in the CPU pool. Logs:
 and deduplicates on `GROUP_KEYS + seed + epsilon` (plus `N` for hwindow), keeping the
 last row.
 
+### Deploying to the GPU server
+
+The deploy is an rsync of the working tree, which carries no git metadata, so stamp
+the commit into `ENGINE_VERSION` first; `git_short_sha` falls back to that file and
+the `engine_version` column then records the code that produced each row.
+
+```bash
+git rev-parse --short HEAD > ENGINE_VERSION          # read by eqsp/io.py:git_short_sha
+rsync -a --exclude .git --exclude .venv --exclude results/v2/shards ./ server:~/sensing_qec/numerics/
+```
+
 ## Analysis and figures
 
 ```bash
 uv run python scripts/analyze.py                 # results/v2 -> numbers.json, tables/*.tex, derived/*.csv
-uv run python scripts/analyze.py --v1            # committed scripts/results/*.csv (legacy headers)
-uv run python scripts/analyze.py --compare v1    # also results/v2/compare_v1.md (flag: |diff| > 2 sqrt(sem_v2^2 + sem_v1^2))
 uv run python scripts/plot.py                    # results/v2 -> ../figures/fig{1..5}_*.{pdf,png}
-uv run python scripts/plot.py --v1 --out /tmp/v1figs --figs fig1 fig2 fig3
+uv run python scripts/paper_numbers.py --tex ../sensing.tex --numbers results/v2/numbers.json --dry-run
 ```
 
 Fit convention (`eqsp/fit.py`): per-seed OLS of $\log T$ on $\log\varepsilon$ over
@@ -199,50 +193,27 @@ Besides the two power-law windows, `analyze.py` fits the seed-mean cost of every
 `T * eps = a + b ln(1/eps)` (Heisenberg scaling with a logarithmic overhead) and reports the RMS relative
 residual of that model and of a pure power law on the same averaged data (`derived/cells.csv`,
 `text.logfit.*`). On the 60-target grid a pure `ln(1/eps)/eps` law fits as alpha = 1.19 (full range) and
-1.15 (asymptotic); the v2 Bayesian cells sit there, the sequential binary search (geometric schedule) at 1.00.
-
+1.15 (asymptotic); the Bayesian cells sit there, the sequential binary search (geometric schedule) at 1.00.
 
 ## Tests
 
 ```bash
-uv run pytest                  # 189 tests (uv run pytest --co -q per file for the split): closed forms vs
-                               # PennyLane (139), RNG replay (17), engine (32), always-on exact
-                               # reproduction of committed sequential.csv rows (1)
-uv run pytest -m regression    # diagnostic tiers against scripts/results/*.csv; writes
-                               # results/v2/regression_report.md; reported, never gating
+JAX_PLATFORMS=cpu uv run pytest -q tests/
 ```
 
-The regression exact tier reruns seeds 1 and 2 of one cell per protocol with
-`--model theorem` at the three largest targets and compares `total_resources,
-converged, final_error`; bitwise agreement is expected only for `sequential` (pure
-NumPy), since the committed JAX rows came from a GPU float32 build. The statistical
-tier (alpha within 2 SEM, converged fraction within 2 points) runs once merged v2
-CSVs exist. `checks/` holds the one-off kernel checks used during the rewrite.
+201 tests: closed forms against PennyLane state-vector circuits (139), per-target RNG
+streams and draw order (36), engine loop and stopping rule (26). One test is skipped
+(a marginalised combined cell at $\sigma_\varepsilon = 0$, which is the quenched run).
 
 ## Provenance
 
 Every CSV row carries `engine_version` (numerics git short SHA, `-dirty` when the
-tree has uncommitted tracked changes) and `jax_version` (`jax.__version__`, `none`
-for `sequential`). Floats are written `%.10e` so `gamma` and `sigma_epsilon`
-round-trip to the doubles the analyzer groups on.
+tree has uncommitted tracked changes, or the `ENGINE_VERSION` deploy stamp) and
+`jax_version` (`jax.__version__`, `none` for `sequential`). Floats are written
+`%.10e` so `gamma` and `sigma_epsilon` round-trip to the doubles the analyzer groups
+on. The rows of the committed suite were produced before the `ENGINE_VERSION` stamp
+existed and their `engine_version` was reconstructed from the row timestamp by
+`suite.py --stamp-engine-version`; `DATA.md` documents the rule and its assumption.
 
-## Legacy
-
-The v1 scripts (`simulation*.py`, `analyze_*.py`, `plot_redesigned.py`, `run_suite*.sh`)
-live at git tag `v1-jax-suite`; their committed output stays in `scripts/results/`
-(see `DATA.md`). Physical changes in v2:
-
-- The exact coset-mixture likelihood for the repetition-code GHZ is the default
-  (`--model exact`); the legacy minimum-weight closed form survives as
-  `--model theorem` for the regression diagnostic only.
-- Bare GHZ is simulated under the same Hamiltonian (transverse-field) noise as the
-  encoded protocols, with adaptive $N = \lfloor 1/\varepsilon \rfloor$
-  (`bare_adaptive`), so bare-versus-encoded comparisons are within one noise model.
-- The depolarizing bare-GHZ likelihood (legacy `simulation.py`) was dropped, with the
-  heterogeneous-$\gamma$ rows (`h > 0`), the cond-only ablation, the
-  $\sigma_\varepsilon$ breakdown scan, and the $\gamma \in \{0.30, 0.45\}$ pilot rows.
-- Preparation infidelity scales only the coherent term (a test finding; the first
-  draft scaled the whole likelihood).
-- New: readout-flip and preparation-infidelity models with mismatched and aware
-  estimators, the Heisenberg-window sweep, and the `M_exec_max` column (deepest
-  executed round depth) for `sequential`.
+The earlier generation of simulators and their output live at git tag `v1-jax-suite`
+and are not needed to reproduce anything in the paper.

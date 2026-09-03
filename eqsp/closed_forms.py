@@ -5,7 +5,7 @@ U_k = exp(-i M (omega Z_k + gamma_k X_k)) acting on a GHZ state
 (|0...0> + |1...1>)/sqrt(2), followed by Z_i Z_{i+1} syndrome measurements
 within repetition-code blocks and an X^{(x)N} parity readout.  Functions
 ``ghz_code_probs_theorem`` reproduces the closed form stated in Theorem
-``thm:bitflip`` of sensing.tex (and the legacy simulators); the unsuffixed
+``thm:bitflip`` of sensing.tex; the unsuffixed
 ``ghz_code_probs`` is the exact circuit likelihood, which additionally keeps
 the logical-X coset partner of each syndrome (relative probability weight
 (p/(1-p))^{N-2d}; the amplitude ratio is its square root).  ``tests/test_closed_forms_pennylane.py`` checks these
@@ -19,7 +19,7 @@ Conventions
 * ``blocks`` is a list of index arrays, one per repetition-code block; the
   syndrome of a block is Z_i Z_{i+1} on consecutive block members, so it
   fixes the block's pattern up to complementation.
-* Parity outcome 0 = +1 eigenvalue of X^{(x)N}, 1 = -1 (legacy convention).
+* Parity outcome 0 = +1 eigenvalue of X^{(x)N}, 1 = -1.
 """
 from __future__ import annotations
 
@@ -85,8 +85,7 @@ def bare_bloch(omega, gamma, M):
 
 def bare_parity(omega, gamma, M, n):
     """Exact <X^{(x)n}> on an n-qubit GHZ state after U^{(x)n}:
-    Re[(A - iB)^n] + [n even] C^n.  The legacy kernel (odd N only) omits the
-    even-n term."""
+    Re[(A - iB)^n] + [n even] C^n (the even-n population term vanishes for odd n)."""
     A, B, C = bare_bloch(omega, gamma, M)
     val = ((A - 1j * B) ** n).real
     if n % 2 == 0:
@@ -218,7 +217,7 @@ def _branch_amplitudes(a, c, x):
 
 
 def ghz_code_probs_theorem(p, phi, pattern, V=1.0, q_parity_n=None, q=0.0, theta=0.0):
-    """Theorem thm:bitflip / legacy model: P(s) = prod_k p_k^{e_k}(1-p_k)^{1-e_k}
+    """Theorem thm:bitflip closed form: P(s) = prod_k p_k^{e_k}(1-p_k)^{1-e_k}
     (one representative pattern), P(+/-|s) = (1 +/- V cos(2 sum_{k clean} phi_k - theta))/2."""
     p = np.asarray(p)
     phi = np.asarray(phi)

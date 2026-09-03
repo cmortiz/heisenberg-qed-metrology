@@ -1,5 +1,4 @@
-"""Engine loop tests against the interface fixed in the plan ('Engine contract',
-'Protocol adapter').  A toy protocol with a fully controlled posterior drives
+"""Engine loop tests.  A toy protocol with a fully controlled posterior drives
 ``run_epsilon``; nothing here depends on a physics kernel.
 
 Skips until ``eqsp.engine`` exists.
@@ -72,7 +71,7 @@ def test_make_grid_is_float32_half_open_period(builder, period):
     assert xs_np[-1] < period
     # spacing period / 2^m to float32 rounding
     assert abs(float(xs_np[1]) - period / 2**m) < 1e-6 * period
-    # builders: jax32 = jnp.linspace(float32) (legacy sim:143); np64 = float64 linspace then cast (bh:156-158)
+    # builders: jax32 = jnp.linspace(float32); np64 = float64 linspace then cast to float32
     if builder == "np64":
         ref = np.linspace(0, period, 2**m, endpoint=False, dtype=np.float64).astype(np.float32)
         assert np.array_equal(xs_np, ref)
@@ -82,7 +81,7 @@ def test_make_grid_is_float32_half_open_period(builder, period):
 
 
 # --------------------------------------------------------------------------
-# map_error: period handling
+# MAP error (the first return of posterior_stats): period handling
 # --------------------------------------------------------------------------
 def _delta_logpk(n, idx, weight=None):
     """Log-posterior concentrated on grid index/indices ``idx``."""
@@ -94,27 +93,29 @@ def _delta_logpk(n, idx, weight=None):
     return jnp.asarray(np.log(p).astype(np.float32))
 
 
+def _map_error(logpk, xs, omega_true, period):
+    return float(engine.posterior_stats(logpk, xs, omega_true, period=period)[0])
+
+
 def test_map_error_bimodal_pi_periodic_posterior():
     """At gamma = 0 the bare likelihood is pi-periodic: on a [0, 2pi) grid the
     posterior is exactly bimodal (omega and omega + pi) and the MAP error is pi;
-    on the [0, pi) grid it is unimodal and the error is at the grid resolution."""
+    on the [0, pi) grid it is unimodal and the error is at the grid resolution.
+    This is why every adapter puts its prior on one M = 1 fringe period."""
     m = 12
     n = 2**m
     xs2 = engine.make_grid(m, 2 * math.pi, "np64")
     i1 = int(round(OMEGA / (2 * math.pi) * n))
     i2 = int(round((OMEGA + math.pi) / (2 * math.pi) * n))
-    logpk = _delta_logpk(n, [i1, i2])
-    err = float(engine.map_error(logpk, xs2, OMEGA, 2 * math.pi))
+    err = _map_error(_delta_logpk(n, [i1, i2]), xs2, OMEGA, 2 * math.pi)
     # argmax picks one of the two equal peaks; circular distance is either ~0 or ~pi.
     # Break the tie towards the wrong peak to show the failure mode is real:
-    logpk_wrong = _delta_logpk(n, [i1, i2], weight=[1.0, 1.0 + 1e-3])
-    err_wrong = float(engine.map_error(logpk_wrong, xs2, OMEGA, 2 * math.pi))
+    err_wrong = _map_error(_delta_logpk(n, [i1, i2], weight=[1.0, 1.0 + 1e-3]), xs2, OMEGA, 2 * math.pi)
     assert abs(err_wrong - math.pi) < 2 * math.pi / n + 1e-6
     assert min(abs(err), abs(err - math.pi)) < 2 * math.pi / n + 1e-6
     xs1 = engine.make_grid(m, math.pi, "jax32")
     j1 = int(round(OMEGA / math.pi * n))
-    err1 = float(engine.map_error(_delta_logpk(n, j1), xs1, OMEGA, math.pi))
-    assert err1 < math.pi / n + 1e-6
+    assert _map_error(_delta_logpk(n, j1), xs1, OMEGA, math.pi) < math.pi / n + 1e-6
 
 
 @pytest.mark.parametrize("period", [math.pi, 2 * math.pi])
@@ -125,15 +126,12 @@ def test_map_error_is_circular_distance(period):
     # peak just below the wrap, truth just above zero: distance wraps through the period
     k = n - 2
     truth = 3 * period / n
-    err = float(engine.map_error(_delta_logpk(n, k), xs, truth, period))
-    assert abs(err - 5 * period / n) < 1e-5
+    assert abs(_map_error(_delta_logpk(n, k), xs, truth, period) - 5 * period / n) < 1e-5
     # peak at the truth's grid point
     k2 = 17
-    err2 = float(engine.map_error(_delta_logpk(n, k2), xs, float(np.asarray(xs)[k2]), period))
-    assert err2 < 1e-6
+    assert _map_error(_delta_logpk(n, k2), xs, float(np.asarray(xs)[k2]), period) < 1e-6
     # error never exceeds period/2
-    err3 = float(engine.map_error(_delta_logpk(n, 0), xs, period / 2, period))
-    assert abs(err3 - period / 2) < 1e-5
+    assert abs(_map_error(_delta_logpk(n, 0), xs, period / 2, period) - period / 2) < 1e-5
 
 
 # --------------------------------------------------------------------------
@@ -142,11 +140,11 @@ def test_map_error_is_circular_distance(period):
 class ToyProtocol:
     """Adapter with a scripted posterior.  ``script[i]`` is either None (reject)
     or a grid index at which the posterior is concentrated after round i; the
-    default is the truth index (converged at the first check)."""
+    default is the truth index (a delta posterior, so the stopping rule fires at
+    the first update)."""
 
     period = 2 * math.pi
     grid_builder = "np64"
-    family = "ham"
     omega_true = OMEGA
 
     def __init__(self, cfg, m, script=None, flat=False):
@@ -157,7 +155,6 @@ class ToyProtocol:
         self.i_true = int(round(OMEGA / self.period * self.n))
         self.script = script or {}
         self.flat = flat
-        self.check_calls = []
         self.apply_calls = []
         self.account_calls = []
         self.dtypes_seen = set()
@@ -188,22 +185,12 @@ class ToyProtocol:
     def account(self, shot, ctr):
         self.account_calls.append(shot.aux["i"])
 
-    def check_due(self, i, ctr):
-        self.check_calls.append(i)
-        f = self.cfg.check_every
-        if self.cfg.check_counter == "round0":
-            return i % f == 0
-        if self.cfg.check_counter == "round1":
-            return (i + 1) % f == 0
-        return ctr.n_updates % f == 0
-
     def row(self, ctr, converged, error):
         return {"converged": converged, "final_error": error}
 
 
 def _cfg(**kw):
-    base = dict(max_experiments=20, check_every=1, check_counter="round0", tolerance=1.2, track_best_error=False,
-                stop="legacy")
+    base = dict(max_experiments=20, tolerance=1.2)
     base.update(kw)
     return EngineConfig(**base)
 
@@ -213,7 +200,9 @@ def _run(p, eps=1e-2, seed=0):
     return engine.run_epsilon(p, eps, np.random.default_rng(seed))
 
 
-def test_run_epsilon_converges_at_first_check_and_posterior_is_float32():
+def test_run_epsilon_stops_at_the_first_narrow_posterior_and_stays_float32():
+    """The toy posterior collapses onto the truth's grid point at the first update,
+    so 2 std <= eps holds there and the run stops with a converged result."""
     p = ToyProtocol(_cfg(), m=12)
     res = _run(p)
     assert res.converged is True
@@ -223,24 +212,22 @@ def test_run_epsilon_converges_at_first_check_and_posterior_is_float32():
     assert p.dtypes_seen == {"float32"}
 
 
-def test_rejected_shots_charge_cost_but_neither_update_nor_check():
+def test_rejected_shots_charge_cost_but_neither_update_nor_test_the_posterior():
     script = {0: None, 1: None, 2: None}          # three rejected rounds first
-    p = ToyProtocol(_cfg(check_counter="update"), m=12, script=script)
+    p = ToyProtocol(_cfg(), m=12, script=script)
     res = _run(p)
     ctr = _ctr(res)
     assert ctr.n_rejected == 3
-    assert ctr.resources == 7 * 4                 # cost charged on rejected rounds (ed:224)
+    assert ctr.resources == 7 * 4                 # a rejected shot was still run, so its cost is charged
     assert ctr.n_updates == 1 and ctr.n_accepted == 1
     assert p.apply_calls == [3] and p.account_calls == [3]
-    assert all(i >= 3 for i in p.check_calls)     # no check during rejected rounds
     assert res.converged
 
 
 def test_exhausting_max_experiments_is_never_converged():
     p = ToyProtocol(_cfg(max_experiments=6), m=12, flat=True)
-    res = _run(p, eps=1e-9)                       # tolerance 1.2e-9 rad: no check can pass
+    res = _run(p, eps=1e-9)                       # a flat posterior never reaches 2 std <= eps
     ctr = _ctr(res)
-    # legacy checks on the last round too (sim:196, bh:192); falling through is never converged
     assert not res.converged
     assert ctr.n_rounds == 6 and ctr.n_updates == 6
     # with a flat posterior the MAP sits at grid index 0 -> error = omega_true
@@ -253,54 +240,6 @@ def test_all_rejected_never_converged_and_no_update():
     ctr = _ctr(res)
     assert not res.converged
     assert ctr.n_rejected == 5 and ctr.n_updates == 0 and ctr.resources == 35
-
-
-@pytest.mark.parametrize("track_best", [True, False])
-def test_track_best_error_semantics(track_best):
-    """Posterior peaks at the truth in round 0 (error at grid resolution, but the
-    tolerance is tiny so it does not converge), then jumps far away and stays.
-    best-error mode reports the round-0 error; final mode reports the last."""
-    m = 12
-    n = 2**m
-    i_true = int(round(OMEGA / (2 * math.pi) * n))
-    far = (i_true + n // 4) % n
-    script = {i: far for i in range(1, 6)}
-    p = ToyProtocol(_cfg(max_experiments=6, track_best_error=track_best), m=m, script=script)
-    res = _run(p, eps=1e-9)
-    assert not res.converged
-    err = float(res.error)
-    if track_best:
-        assert err < 2 * math.pi / n + 1e-6
-    else:
-        assert abs(err - math.pi / 2) < 2 * math.pi / n + 1e-5
-
-
-@pytest.mark.parametrize("counter,expected_rounds", [("round0", 1), ("round1", 3), ("update", 4)])
-def test_check_cadence_counters(counter, expected_rounds):
-    """check_every = 3; one rejected round at i = 0.
-    round0: i % 3 == 0 -> checks at i = 0, but that round is rejected, so the
-            first check is i = 3 ... unless a converged posterior exists earlier;
-            with the reject at i = 0 the first eligible check is i = 3 (4 rounds).
-    Use no reject for round0 to keep the plan's semantics visible."""
-    if counter == "round0":
-        p = ToyProtocol(_cfg(check_every=3, check_counter="round0"), m=10)
-    elif counter == "round1":
-        p = ToyProtocol(_cfg(check_every=3, check_counter="round1"), m=10)
-    else:
-        # update counter: reject i = 0, updates at i = 1, 2, 3 -> third update at i = 3
-        p = ToyProtocol(_cfg(check_every=3, check_counter="update"), m=10, script={0: None})
-    res = _run(p)
-    assert res.converged
-    assert _ctr(res).n_rounds == expected_rounds
-
-
-def test_last_round_is_always_checked():
-    """i == max_experiments - 1 forces a check even off-cadence; the posterior
-    is converged from round 0, so the result converges only at that last round."""
-    p = ToyProtocol(_cfg(max_experiments=5, check_every=100, check_counter="round1"), m=10)
-    res = _run(p)
-    assert res.converged
-    assert _ctr(res).n_rounds == 5
 
 
 def test_tolerance_is_strict_multiple_of_eps():
@@ -361,17 +300,15 @@ class GaussToy(ToyProtocol):
 
 
 def test_posterior_rule_ignores_lucky_map_hits_while_posterior_is_wide():
-    """MAP sits exactly on the truth from the first update, but the posterior is
-    10x wider than the target: the legacy rule stops at once, the posterior rule
-    waits until 2 std <= eps (engine.run_epsilon, stop_std: the 95% credible
-    half-width of a Gaussian is 1.96 std, rounded to 2).  The widths list puts the
-    decisive update at exact equality (2 * 0.5 eps = eps) to pin the <= in the rule."""
+    """The MAP sits exactly on the truth from the first update, but the posterior is
+    10x wider than the target: the rule waits until 2 std <= eps (engine.run_epsilon,
+    stop_std: the 95% credible half-width of a Gaussian is 1.96 std, rounded to 2).
+    The widths list puts the decisive update at exact equality (2 * 0.5 eps = eps)
+    to pin the <= in the rule.  A truth-based rule would have stopped at update 1,
+    making T depend on how often the estimate is checked."""
     eps = 1e-3
     widths = [10 * eps, 5 * eps, 2 * eps, eps, 0.5 * eps, 0.1 * eps]
-    legacy = GaussToy(_cfg(max_experiments=10), m=18, widths=widths)
-    res_l = _run(legacy, eps=eps)
-    assert res_l.converged and _ctr(res_l).n_updates == 1
-    post = GaussToy(_cfg(max_experiments=10, stop="posterior"), m=18, widths=widths)
+    post = GaussToy(_cfg(max_experiments=10), m=18, widths=widths)
     res_p = _run(post, eps=eps)
     ctr = _ctr(res_p)
     assert res_p.converged
@@ -382,7 +319,7 @@ def test_posterior_rule_ignores_lucky_map_hits_while_posterior_is_wide():
 
 def test_posterior_rule_stop_with_wrong_map_is_not_converged():
     eps = 1e-3
-    post = GaussToy(_cfg(max_experiments=10, stop="posterior"), m=18, widths=[0.1 * eps], center=OMEGA + 5 * eps)
+    post = GaussToy(_cfg(max_experiments=10), m=18, widths=[0.1 * eps], center=OMEGA + 5 * eps)
     res = _run(post, eps=eps)
     ctr = _ctr(res)
     assert not res.converged and ctr.n_updates == 1
@@ -390,12 +327,11 @@ def test_posterior_rule_stop_with_wrong_map_is_not_converged():
 
 
 def test_posterior_rule_exhausting_budget_is_not_converged_and_records_std():
-    p = ToyProtocol(_cfg(max_experiments=6, stop="posterior"), m=12, flat=True)
+    p = ToyProtocol(_cfg(max_experiments=6), m=12, flat=True)
     res = _run(p, eps=1e-2)
     ctr = _ctr(res)
     assert not res.converged and ctr.n_rounds == 6 and ctr.n_updates == 6
     assert abs(ctr.posterior_std - 2 * math.pi / math.sqrt(12)) < 1e-2   # uniform on the circle
-    assert p.check_calls == []                                            # cadence never consulted
 
 
 def test_make_grid_offset_window():
@@ -407,7 +343,7 @@ def test_make_grid_offset_window():
 
 def test_fixed_N_complex_kernel_matches_closed_form_sign():
     """ghz_x_parity_grid_complex returns prod_k (A_k - i B_k) of closed_forms.bare_bloch, including
-    the sign of the imaginary part (the legacy real-part-only kernel hid a conjugation)."""
+    the sign of the imaginary part (a real-part-only kernel would hide a conjugation)."""
     from eqsp import closed_forms as cf, hamiltonian as H
     om = np.array([0.1, 0.3, 0.7], np.float32)
     for gamma, M, N in [(0.05, 7, 3), (0.1, 123, 5)]:
@@ -422,10 +358,10 @@ def test_fixed_N_complex_kernel_matches_closed_form_sign():
 
 def test_exact_ed_update_finite_when_syndrome_probability_saturates():
     """p = 1 exactly (grid crossing omega = 0 at sin^2(M Omega) = 1) must not produce a NaN posterior
-    (v2_full2 finding: ED gamma = 0.10, L <= 2, 36 exhausted rows with error = half window)."""
+    (found in the full run: ED gamma = 0.10, L <= 2, 36 exhausted rows with error = half window)."""
     import jax.numpy as jnp
     from eqsp import hamiltonian as H
-    G, N = 64, 3
+    G = 64
     p_grid = jnp.linspace(0.0, 1.0, G, dtype=jnp.float32)          # includes exact 0 and exact 1
     phi_grid = jnp.linspace(0.0, 1.0, G, dtype=jnp.float32)
     logpk = jnp.full((G,), -jnp.log(G), dtype=jnp.float32)
@@ -434,8 +370,6 @@ def test_exact_ed_update_finite_when_syndrome_probability_saturates():
         out = H.exact_ed_update(logpk, p_grid, phi_grid, logc, jnp.float32(0.0), outcome, jnp.float32(0.3))
         assert bool(jnp.isfinite(out).all()), "NaN/inf in the exact ED update at p in {0, 1}"
         assert abs(float(jnp.exp(out).sum()) - 1.0) < 1e-4
-    out = H.syndrome_update_homogeneous(logpk, p_grid, 0, N)
-    assert bool(jnp.isfinite(out).all())
 
 
 def test_marg_cap_limits_depth_to_the_information_optimal_M():

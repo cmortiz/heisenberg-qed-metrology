@@ -2,10 +2,8 @@
 """Analyze suite CSVs: per-cell fits, numbers.json (one key per paper element), LaTeX table rows.
 
 Usage
-    uv run python scripts/analyze.py                       # results/v2 (auto-detects layout)
-    uv run python scripts/analyze.py --v1                  # committed scripts/results (legacy headers)
-    uv run python scripts/analyze.py --compare v1          # also write results/v2/compare_v1.md
-    uv run python scripts/analyze.py --results-dir DIR     # any directory in either layout
+    uv run python scripts/analyze.py                       # results/v2
+    uv run python scripts/analyze.py --results-dir DIR     # any directory of suite CSVs
 
 Outputs (under the results directory)
     derived/cells.csv            one row per (GROUP_KEYS) cell: both fit windows, shift, prefactor, acceptance
@@ -13,7 +11,6 @@ Outputs (under the results directory)
     derived/fisher.csv           per-cell Fisher-saturation ratios (ED-FL and combined-FL)
     numbers.json       paper elements; keys documented in results/numbers_schema.md
     tables/*.tex       table rows in the paper's column order (paste into the tabular bodies)
-    compare_v1.md      with --compare v1
 
 Fit convention: eqsp/fit.py docstring.  Every alpha carries its window and min_points.
 """
@@ -31,95 +28,40 @@ import pandas as pd
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 from eqsp import fit  # noqa: E402
-from eqsp.config import CSV_COLUMNS, GROUP_KEYS, OMEGA_TRUE  # noqa: E402
+from eqsp.config import GROUP_KEYS, OMEGA_TRUE  # noqa: E402
 
-V1_DIR = REPO / "scripts" / "results"
 V2_DIR = REPO / "results" / "v2"
 
-# legacy file stem -> (v2 protocol, v2 mode label); mode values inside the files differ from the stems
-V1_FILES = {
-    "bare_ghz": ("bare_depol", "ghz"),
-    "bare_hamiltonian": ("bare_fixed", "bare_hamiltonian"),
-    "ed_full_likelihood": ("ed", "ed_full_likelihood"),
-    "ed_postselect": ("ed", "ed_postselect"),
-    "combined_full_likelihood": ("combined", "combined_full_likelihood"),
-    "combined_postselect": ("combined", "combined_postselect"),
-    "combined_full_likelihood_marg": ("combined", "combined_full_likelihood_marg"),
-    "sequential": ("sequential", "sequential"),
-}
-PROTOCOLS = ["bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow"]   # v2 files: results/v2/<protocol>.csv
-# sentinel for group keys that a protocol does not use (NaN keys would drop rows in groupby).  The
-# sentinels are the "absent" value of each parameter (no noise, no offsets, no readout or prep error,
-# the default estimator); v1 CSVs carry no model/stop_rule column and were produced by the legacy
-# kernels and the legacy truth-based stop, hence "legacy".  Every v2 row writes every key itself.
-KEY_FILL = {"gamma": 0.0, "h": 0.0, "sigma_epsilon": 0.0, "L": 0, "q": 0.0, "k": 1.0, "F": 1.0,
-            "estimator": "mismatched", "model": "legacy", "stop_rule": "legacy"}
-TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]   # tab:prefactor-results rows (v1 paper layout kept by plan P3); text.prefactor.* ranges run over the same rows
+PROTOCOLS = ["bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow"]   # files: <results-dir>/<protocol>.csv
+TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]   # tab:prefactor-results rows; text.prefactor.* ranges run over the same rows
 FIG1_BARE_GAMMAS = [0.01, 0.05, 0.10]
 FIG3_CELLS = [(1, 0.01, 0.01), (1, 0.10, 0.01), (2, 0.10, 0.01)]
 WEAK_NOISE_P = [0.01, 0.05, 0.10]
 SEQ_EPS_QUOTE = 1e-2   # target at which the sequential depth is quoted (plan P5: "deepest executed round depth per eps"); the asymptotic-window edge
-COMBINED_TABLE_SIGMAS = [0.01, 0.05]   # tab:combined-results cells; the v1 CSV also holds the cut sigma scan
+COMBINED_TABLE_SIGMAS = [0.01, 0.05]   # tab:combined-results cells
 
 
 # --------------------------------------------------------------------------- loading
-def v2_files(results_dir: Path) -> list[Path]:
+def protocol_files(results_dir: Path) -> list[Path]:
     return [results_dir / f"{p}.csv" for p in PROTOCOLS if (results_dir / f"{p}.csv").exists()]
 
 
-def is_v2_layout(results_dir: Path) -> bool:
-    for p in v2_files(results_dir):
-        return "protocol" in p.open().readline().strip().split(",")
-    return False
-
-
-def load_v1(results_dir: Path) -> pd.DataFrame:
-    frames = []
-    for stem, (protocol, mode) in V1_FILES.items():
-        path = results_dir / f"{stem}.csv"
-        if not path.exists():
-            continue
-        df = pd.read_csv(path)
-        if stem == "bare_ghz":
-            df = df[df["mode"] == "ghz"]
-        df = df.assign(protocol=protocol, mode=mode, source_csv=path.name)
-        frames.append(df)
-    if not frames:
-        sys.exit(f"no legacy CSVs found in {results_dir}")
-    return pd.concat(frames, ignore_index=True, sort=False)
-
-
-def load_v2(results_dir: Path) -> pd.DataFrame:
-    frames = []
-    for path in v2_files(results_dir):
-        frames.append(pd.read_csv(path).assign(source_csv=path.name))
-    if not frames:
-        sys.exit(f"no v2 CSVs found in {results_dir}")
-    return pd.concat(frames, ignore_index=True, sort=False)
-
-
 def normalize(df: pd.DataFrame) -> pd.DataFrame:
-    """Common column set, sentinel-filled group keys, bool converged, deduplicated (keep last)."""
-    for col in CSV_COLUMNS:
-        if col not in df.columns:
-            df[col] = np.nan
-    for col, val in KEY_FILL.items():
-        df[col] = df[col].fillna(val)
+    """Bool converged, int L, deduplicated on the cell keys plus (seed, epsilon) keeping the last row."""
     df["L"] = df["L"].astype(int)
     df["converged"] = fit.coerce_converged(df["converged"])
-    dedupe_keys = GROUP_KEYS + ["seed", "epsilon"] + (["N"] if "N" in df.columns else [])
-    df["N"] = df["N"].fillna(-1)   # -1 = "not a per-N cell" (only hwindow varies N inside a cell); keeps N usable as a dedupe key
+    dedupe_keys = GROUP_KEYS + ["seed", "epsilon", "N"]
     before = len(df)
     df = df.drop_duplicates(subset=dedupe_keys, keep="last").reset_index(drop=True)
     df.attrs["n_duplicates_dropped"] = before - len(df)
     return df
 
 
-def load_results(results_dir: Path, v1: bool) -> pd.DataFrame:
-    df = load_v1(results_dir) if v1 or not is_v2_layout(results_dir) else load_v2(results_dir)
-    df = normalize(df)
-    df.attrs["layout"] = "v1" if v1 or not is_v2_layout(results_dir) else "v2"
-    return df
+def load_results(results_dir: Path) -> pd.DataFrame:
+    frames = [pd.read_csv(path).assign(source_csv=path.name) for path in protocol_files(results_dir)]
+    if not frames:
+        sys.exit(f"no protocol CSVs found in {results_dir}")
+    return normalize(pd.concat(frames, ignore_index=True, sort=False))
 
 
 def clean(df: pd.DataFrame) -> pd.DataFrame:
@@ -175,8 +117,8 @@ def analyze_hwindow(df: pd.DataFrame) -> pd.DataFrame:
 def fisher_saturation(df: pd.DataFrame) -> pd.DataFrame:
     """Per-cell saturation of sum_F_obs against sum_M_sq * 4 N^2 (1 - (gamma/omega)^2) on eps < 1e-2.
 
-    Recipe lifted from scripts/analyze_fisher_saturation.py:46-85 (v1-jax-suite): converged rows,
-    per-seed mean of the ratio over the asymptotic window, then mean and SEM over seeds.
+    Converged rows, per-seed mean of the ratio over the asymptotic window, then
+    mean and SEM over seeds.
     seed_min is the smallest per-seed mean (the "dips to 0.97 for individual seeds" figure).
     """
     sub = clean(df[df["mode"].isin(["ed_full_likelihood", "combined_full_likelihood"])])
@@ -185,7 +127,7 @@ def fisher_saturation(df: pd.DataFrame) -> pd.DataFrame:
     for keys, g in sub.groupby(GROUP_KEYS, sort=True):
         row = dict(zip(GROUP_KEYS, keys))
         N = int(g["N_total"].iloc[0]) if row["protocol"] == "combined" else int(g["N_code"].iloc[0])
-        if row["gamma"] >= OMEGA_TRUE:   # the 1 - gamma^2/omega^2 ceiling is not defined here (v1 pilot gammas 0.30, 0.45); no v2 cell
+        if row["gamma"] >= OMEGA_TRUE:   # the 1 - gamma^2/omega^2 ceiling is not defined there; no suite cell reaches it
             continue
         correction = 1.0 - (row["gamma"] / OMEGA_TRUE) ** 2
         ratio = g["sum_F_obs"] / (g["sum_M_sq"] * 4.0 * N**2 * correction)
@@ -199,17 +141,6 @@ def fisher_saturation(df: pd.DataFrame) -> pd.DataFrame:
                     "seed_max": float(seed_means.max()) if n else np.nan})
         rows.append(row)
     return pd.DataFrame(rows)
-
-
-def sequential_schedule_depth(eps_tar: float, w0: float = math.pi, c_m: float = math.pi / 2) -> int:
-    """Deepest executed round depth of the legacy binary search (simulation_sequential.py:76-84 replayed)."""
-    width, deepest = w0, 1
-    for _ in range(200):
-        if width <= 2.0 * eps_tar:
-            break
-        deepest = max(1, math.ceil(c_m / width))
-        width /= 2.0
-    return deepest
 
 
 # --------------------------------------------------------------------------- numbers.json helpers
@@ -278,9 +209,9 @@ def clean_cells(cells: pd.DataFrame) -> pd.DataFrame:
 
 # --------------------------------------------------------------------------- numbers.json builders
 def numbers_bare(cells: pd.DataFrame, nums: dict) -> None:
-    """Bare GHZ, adaptive N (v2: bare_adaptive; v1: depolarizing bare_ghz.csv), by gamma. Window: full."""
+    """Bare GHZ, adaptive N, by gamma. Window: full."""
     bare = clean_cells(cells)
-    bare = bare[bare["protocol"].isin(["bare_adaptive", "bare_depol"])]
+    bare = bare[bare["protocol"] == "bare_adaptive"]
     for _, row in bare.iterrows():
         add_bundle(nums, f"tab_bare_within_model.{gk(row['gamma'])}", cell_entries(row, "full"))
         nums[f"fig2.alpha.bare_{gk(row['gamma'])}"] = alpha_entry(row, "asymptotic")
@@ -392,20 +323,10 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
     eps_q = float(eps_grid[np.argmin(np.abs(eps_grid - SEQ_EPS_QUOTE))])
     at = seq[np.isclose(seq["epsilon"], eps_q)]
     src = at["source_csv"].iloc[0]
-    if "M_exec_max" in at.columns and at["M_exec_max"].notna().any():
-        m_exec = float(at["M_exec_max"].max())
-        note = f"max of the M_exec_max column over seeds and cells at eps_tar = {eps_q:.6g} (nearest grid point to 1e-2)"
-    else:
-        m_exec = float(sequential_schedule_depth(eps_q))
-        note = (f"v1 fallback: no M_exec_max column; deepest depth of the deterministic schedule "
-                f"M_r = ceil((pi/2)/W_r) with W_0 = pi and W_r = pi/2^r (depth evaluated before the halving), "
-                f"replayed at eps_tar = {eps_q:.6g} (simulation_sequential.py:76-84)")
-    nums["text.sequential.M_exec_max_eps1e-2"] = scalar_entry(m_exec, src, note)
-    if "M_max_used" in at.columns and at["M_max_used"].notna().any():
-        nums["text.sequential.M_max_used_eps1e-2"] = scalar_entry(
-            float(at["M_max_used"].max()), src,
-            f"legacy CSV column M_max_used = ceil((pi/2)/(2 eps sqrt(N))), max over cells at eps_tar = {eps_q:.6g}; "
-            "not the executed depth (simulation_sequential.py:130)")
+    m_exec = float(at["M_exec_max"].max())
+    nums["text.sequential.M_exec_max_eps1e-2"] = scalar_entry(
+        m_exec, src,
+        f"max of the M_exec_max column over seeds and cells at eps_tar = {eps_q:.6g} (nearest grid point to 1e-2)")
     nums["text.sequential.eps_quoted"] = scalar_entry(eps_q, src, "grid point used for the depth quotes")
     for s in sorted(seq["sigma_epsilon"].unique()):
         if s > 0:
@@ -797,11 +718,10 @@ def table_sequential(cells, outdir):
 
 def table_bare(cells, outdir):
     cc = clean_cells(cells)
-    cc = cc[cc["protocol"].isin(["bare_adaptive", "bare_depol"])].sort_values("gamma")
+    cc = cc[cc["protocol"] == "bare_adaptive"].sort_values("gamma")
     rows = []
     for _, r in cc.iterrows():
-        sym = "p_{\\mathrm{dep}}" if r["protocol"] == "bare_depol" else "\\gamma"
-        label = "Noiseless" if r["gamma"] == 0 else f"${sym} = {100 * r['gamma']:g}\\%$"
+        label = "Noiseless" if r["gamma"] == 0 else f"$\\gamma = {100 * r['gamma']:g}\\%$"
         rows.append(f"{label} & {pm(r['alpha_full'], r['sem_full'])} & {pct(r['converged_pct'], nd=1)} & {int(r['n_seeds_full'])} & {pm(r['alpha_asymptotic'], r['sem_asymptotic'])} \\\\")
     write_rows(outdir / "tab_bare_within_model.tex", "Configuration & alpha (full) & Converged (%) & Seeds & alpha (asymptotic)  (bare GHZ, adaptive N)", rows)
 
@@ -847,58 +767,9 @@ def write_tables(cells, hw, outdir: Path) -> None:
         table_window(hw, outdir)
 
 
-# --------------------------------------------------------------------------- compare v1
-def v1_counterpart(row: pd.Series, v1: pd.DataFrame) -> pd.Series | None:
-    """Map a clean v2 cell to its legacy cell (plan: bare_fixed<->bare_hamiltonian, ed<->ed_*, combined<->combined_*,
-    sequential<->sequential, bare_adaptive gamma=0 <-> bare_ghz gamma=0)."""
-    proto, mode = row["protocol"], row["mode"]
-    if proto == "bare_adaptive":
-        return pick(v1, protocol="bare_depol", gamma=0.0, h=0.0) if np.isclose(row["gamma"], 0.0) else None
-    if proto in ("bare_fixed", "ed"):
-        return pick(v1, protocol=proto, mode=mode, L=int(row["L"]), gamma=float(row["gamma"]))
-    if proto == "combined":
-        return pick(v1, protocol=proto, mode=mode, L=int(row["L"]), gamma=float(row["gamma"]), sigma_epsilon=float(row["sigma_epsilon"]))
-    if proto == "sequential":
-        return pick(v1, protocol=proto, L=int(row["L"]), sigma_epsilon=float(row["sigma_epsilon"]))
-    return None
-
-
-def compare_v1(cells_v2: pd.DataFrame, out_path: Path) -> pd.DataFrame:
-    v1 = clean_cells(analyze_cells(load_results(V1_DIR, v1=True)))
-    rows = []
-    for _, r in clean_cells(cells_v2).iterrows():
-        c = v1_counterpart(r, v1)
-        if c is None:
-            continue
-        for w in fit.WINDOWS:
-            diff = r[f"alpha_{w}"] - c[f"alpha_{w}"]
-            sem_diff = math.hypot(r[f"sem_{w}"], c[f"sem_{w}"])
-            rows.append({"protocol": r["protocol"], "mode": r["mode"], "L": r["L"], "gamma": r["gamma"], "sigma_epsilon": r["sigma_epsilon"],
-                         "window": w, "alpha_v2": r[f"alpha_{w}"], "sem_v2": r[f"sem_{w}"], "n_seeds_v2": r[f"n_seeds_{w}"],
-                         "alpha_v1": c[f"alpha_{w}"], "sem_v1": c[f"sem_{w}"], "n_seeds_v1": c[f"n_seeds_{w}"],
-                         "diff": diff, "sem_diff": sem_diff, "flag": bool(abs(diff) > 2.0 * sem_diff) if sem_diff > 0 else bool(abs(diff) > 0),
-                         "conv_v2": r["converged_pct"], "conv_v1": c["converged_pct"], "v1_csv": c["source_csv"]})
-    cmp = pd.DataFrame(rows)
-    lines = ["# v2 versus committed v1 (tag v1-jax-suite) per-cell alpha", "",
-             "Flag rule: |alpha_v2 - alpha_v1| > 2 sqrt(sem_v2^2 + sem_v1^2). Both windows listed per cell; ",
-             "Converged (%) over all rows. v1 cells deduplicated on (cell, seed, eps) keeping the last row.", ""]
-    if cmp.empty:
-        lines.append("No v2 cell has a v1 counterpart.")
-    else:
-        lines += [f"Cells compared: {len(cmp) // 2}; flagged rows: {int(cmp['flag'].sum())} of {len(cmp)}", "",
-                  "| protocol | mode | L | gamma | sigma | window | alpha_v2 | alpha_v1 | diff | sem_diff | flag | conv_v2 | conv_v1 | v1 csv |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
-        for _, r in cmp.iterrows():
-            lines.append(f"| {r['protocol']} | {r['mode']} | {r['L']} | {r['gamma']:g} | {r['sigma_epsilon']:g} | {r['window']} | "
-                         f"{r['alpha_v2']:.3f} +/- {r['sem_v2']:.3f} (n={r['n_seeds_v2']}) | {r['alpha_v1']:.3f} +/- {r['sem_v1']:.3f} (n={r['n_seeds_v1']}) | "
-                         f"{r['diff']:+.3f} | {r['sem_diff']:.3f} | {'**YES**' if r['flag'] else 'no'} | {r['conv_v2']:.1f} | {r['conv_v1']:.1f} | {r['v1_csv']} |")
-    out_path.write_text("\n".join(lines) + "\n")
-    return cmp
-
-
 # --------------------------------------------------------------------------- main
 def print_summary(cells: pd.DataFrame, hw: pd.DataFrame, df: pd.DataFrame) -> None:
-    print(f"layout={df.attrs['layout']}  rows={len(df):,}  duplicates dropped={df.attrs['n_duplicates_dropped']}  cells={len(cells)}")
+    print(f"rows={len(df):,}  duplicates dropped={df.attrs['n_duplicates_dropped']}  cells={len(cells)}")
     show = ["protocol", "mode", "L", "gamma", "sigma_epsilon", "q", "k", "estimator",
             "alpha_full", "sem_full", "n_seeds_full", "alpha_asymptotic", "sem_asymptotic", "n_seeds_asymptotic", "shift_full_minus_asym", "converged_pct", "C", "accept_pct"]
     with pd.option_context("display.width", 250, "display.max_rows", 500, "display.float_format", lambda x: f"{x:.4g}"):
@@ -909,14 +780,12 @@ def print_summary(cells: pd.DataFrame, hw: pd.DataFrame, df: pd.DataFrame) -> No
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--results-dir", type=Path, default=None, help="default results/v2, or scripts/results with --v1")
-    ap.add_argument("--v1", action="store_true", help="read the committed legacy CSVs (scripts/results) with their old headers")
-    ap.add_argument("--compare", choices=["v1"], default=None, help="write compare_v1.md against the committed CSVs")
+    ap.add_argument("--results-dir", type=Path, default=None, help="directory of suite CSVs (default results/v2)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args()
 
-    results_dir = args.results_dir or (V1_DIR if args.v1 else V2_DIR)
-    df = load_results(results_dir, v1=args.v1)
+    results_dir = args.results_dir or V2_DIR
+    df = load_results(results_dir)
     cells = analyze_cells(df)
     hw = analyze_hwindow(df)
     fs = fisher_saturation(df)
@@ -934,11 +803,6 @@ def main() -> None:
     if not args.quiet:
         print_summary(cells, hw, df)
     print(f"wrote {results_dir / 'numbers.json'} ({len(nums)} keys), {derived}/*.csv, {results_dir / 'tables'}/*.tex")
-    if args.compare == "v1":
-        if df.attrs["layout"] == "v1":
-            sys.exit("--compare v1 needs a v2 results directory")
-        cmp = compare_v1(cells, results_dir / "compare_v1.md")
-        print(f"wrote {results_dir / 'compare_v1.md'}: {int(cmp['flag'].sum()) if len(cmp) else 0} flagged of {len(cmp)} rows")
 
 
 if __name__ == "__main__":

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Suite runner: expands the v2 suite table (plan, 'Suite specification', groups
-1-8), runs one process per (protocol, config, seed) in two thread pools, resumes
-by skipping existing shards, and merges shards into results/v2/<protocol>.csv.
+"""Suite runner: expands the suite table (groups 1-8), runs one process per
+(protocol, config, seed) in two thread pools, resumes by skipping existing
+shards, and merges shards into results/v2/<protocol>.csv.
 
   suite.py [--seeds 1-40] [--only 1,3,7] [--quick] [--dry-run] [--merge] [--label NAME]
-           [--gpu-slots 22] [--cpu-slots 64] [--n-gpus auto|N] [--mem-fraction 0.08]
-           [--cpu-protocols sequential[,bare_adaptive,hwindow]] [--results-dir DIR]
+           [--stamp-engine-version] [--gpu-slots 22] [--cpu-slots 64] [--n-gpus auto|N]
+           [--mem-fraction 0.08] [--cpu-protocols sequential[,bare_adaptive,hwindow]] [--results-dir DIR]
 
 GPU pool: slot s runs on CUDA_VISIBLE_DEVICES = s % n_gpus with
 XLA_PYTHON_CLIENT_PREALLOCATE=true, XLA_PYTHON_CLIENT_MEM_FRACTION=0.08 (11 slots per
@@ -42,13 +42,13 @@ LOG_DIR = REPO / "scripts" / "logs"
 DEFAULT_RESULTS_DIR = REPO / "results" / "v2"
 N_EPS = 60
 
-# grids lifted from run_suite.sh (line anchors in the plan)
-ED_GRID = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.01), (2, 0.05), (2, 0.10), (3, 0.01), (3, 0.05), (3, 0.10)]   # :129-139
+# Per-group parameter grids
+ED_GRID = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.01), (2, 0.05), (2, 0.10), (3, 0.01), (3, 0.05), (3, 0.10)]
 COMB_GRID = [(1, 0.01, 0.01), (1, 0.05, 0.01), (1, 0.10, 0.01), (1, 0.01, 0.05), (1, 0.05, 0.05), (1, 0.10, 0.05),
-             (2, 0.01, 0.01), (2, 0.05, 0.01), (2, 0.10, 0.01), (2, 0.01, 0.05), (2, 0.05, 0.05), (2, 0.10, 0.05)]  # :157-170
-BARE_HAM_GRID = ED_GRID                                                                                        # :196-206 (pilot :208-211 dropped)
-SEQ_GRID = [(1, 0.0), (1, 0.01), (1, 0.05), (2, 0.0), (2, 0.01), (2, 0.05), (3, 0.0), (3, 0.01), (3, 0.05)]   # :270-280
-MARG_CONFIGS = [(1, 0.01, 0.01)]                     # plan table group 4 (run_suite.sh:299-302 lists L in {1,2} at gamma 0.05)
+             (2, 0.01, 0.01), (2, 0.05, 0.01), (2, 0.10, 0.01), (2, 0.01, 0.05), (2, 0.05, 0.05), (2, 0.10, 0.05)]
+BARE_HAM_GRID = ED_GRID
+SEQ_GRID = [(1, 0.0), (1, 0.01), (1, 0.05), (2, 0.0), (2, 0.01), (2, 0.05), (3, 0.0), (3, 0.01), (3, 0.05)]
+MARG_CONFIGS = [(1, 0.01, 0.01)]                     # group 4: marginalised inference, uncapped and depth-capped
 BARE_ADAPTIVE_GAMMAS = [0.0, 0.01, 0.05, 0.10]
 WINDOW_SIGMAS = [0.05, 0.10]
 # hwindow target: eps_tar = 4e-2 sigma^2 = 2e-2 / N*, so the sweep is the same in the scaled variable N/N*
@@ -143,9 +143,9 @@ def expand_jobs(groups: list[int], seeds: list[int], quick: bool) -> list[Job]:
 
 def job_args(job: Job) -> list[str]:
     s = job.spec
-    args = [s.protocol, "--seed", str(job.seed), "--gamma", repr(s.gamma), "--h", repr(s.h), "--L", str(s.L),
+    args = [s.protocol, "--seed", str(job.seed), "--gamma", repr(s.gamma), "--L", str(s.L),
             "--sigma-eps", repr(s.sigma), "--inference", s.inference, "--q", repr(s.q), "--k", repr(s.k),
-            "--F", repr(s.F), "--estimator", s.estimator, "--model", s.model]
+            "--F", repr(s.F), "--estimator", s.estimator]
     if s.marg:
         args.append("--marg")
     if s.marg_cap:
@@ -255,7 +255,7 @@ class Runner:
 
     def warm_up(self, gpu_jobs: list[Job]) -> None:
         """One short process per GPU per distinct (protocol, grid m) to populate the
-        compilation cache before the pool opens (run_suite_parallel.sh:303-315)."""
+        compilation cache before the pool opens."""
         classes: dict[tuple, Job] = {}
         for job in gpu_jobs:
             classes.setdefault((job.spec.protocol, job.grid_m), job)
@@ -277,6 +277,78 @@ class Runner:
 
 
 # --------------------------------------------------------------------------
+# Provenance: engine_version reconstruction
+# --------------------------------------------------------------------------
+# The chupacabras deploy is an rsync of the working tree, so the runs had no git
+# metadata and every row of the v2 suite carries engine_version = "unknown".  The
+# table below is the commit history of the engine (commits touching eqsp/,
+# scripts/run.py or scripts/suite.py) over the run, in the server's clock zone
+# (-0600), which is also the zone of the naive ISO timestamps in the CSV rows.
+# ``engine_version_at`` maps a row timestamp to the last such commit at or before
+# it; the assumption is that a deploy followed each commit, so a row computed at
+# time t ran the code of the newest engine commit at or before t.
+ENGINE_VERSION_BY_TIME = [
+    ("2026-09-02 01:33:51", "f4c574e"),   # engine, protocol adapters, run.py, suite.py
+    ("2026-09-02 01:56:29", "a18a0ea"),   # posterior stopping rule
+    ("2026-09-02 02:14:39", "7361f24"),   # hwindow eps_tar, analyze keys
+    ("2026-09-02 02:29:44", "715a7f9"),   # hwindow device-side chunked loop
+    ("2026-09-02 03:02:42", "870441a"),   # per-shot preparation phase, one-period priors
+    ("2026-09-02 16:32:53", "41738d1"),   # P_MAX float32 clip (NaN posterior fix)
+    ("2026-09-02 19:01:32", "59ca007"),   # combined marg_cap
+    ("2026-09-02 21:09:03", "0894be2"),   # analyze/plot/paper_numbers audit fixes
+]
+UNKNOWN = "unknown"
+
+
+def engine_version_at(timestamp: str) -> str:
+    """Last engine commit at or before ``timestamp`` (naive ISO, server zone);
+    UNKNOWN for a timestamp older than the first entry or unparseable."""
+    try:
+        t = dt.datetime.fromisoformat(str(timestamp))
+    except ValueError:
+        return UNKNOWN
+    out = UNKNOWN
+    for stamp, sha in ENGINE_VERSION_BY_TIME:
+        if t >= dt.datetime.fromisoformat(stamp):
+            out = sha
+        else:
+            break
+    return out
+
+
+def stamp_engine_version(df) -> int:
+    """Fill engine_version in place wherever it is UNKNOWN; returns the row count changed."""
+    if "engine_version" not in df.columns or "timestamp" not in df.columns:
+        return 0
+    mask = df["engine_version"].astype(str) == UNKNOWN
+    n = int(mask.sum())
+    if n:
+        df.loc[mask, "engine_version"] = df.loc[mask, "timestamp"].map(engine_version_at)
+    return n
+
+
+def stamp_engine_version_files(results_dir: Path, log=print) -> None:
+    """Rewrite results_dir/<protocol>.csv in place, replacing only the
+    engine_version field of rows that carry UNKNOWN (every other byte is copied
+    through verbatim)."""
+    import csv
+    for path in sorted(results_dir.glob("*.csv")):
+        with path.open(newline="") as f:
+            rows = list(csv.reader(f))
+        if not rows or "engine_version" not in rows[0]:
+            continue
+        iv, it = rows[0].index("engine_version"), rows[0].index("timestamp")
+        n = 0
+        for r in rows[1:]:
+            if r[iv] == UNKNOWN:
+                r[iv] = engine_version_at(r[it])
+                n += 1
+        with path.open("w", newline="") as f:
+            csv.writer(f, lineterminator="\n").writerows(rows)
+        log(f"stamped {n} rows of {path} ({len(rows) - 1} total)")
+
+
+# --------------------------------------------------------------------------
 # Merge
 # --------------------------------------------------------------------------
 def merge(results_dir: Path, log=print) -> None:
@@ -294,9 +366,11 @@ def merge(results_dir: Path, log=print) -> None:
         n0 = len(df)
         df = df.sort_values(keys + ["timestamp"], kind="mergesort")
         df = df.drop_duplicates(subset=keys, keep="last").sort_values(keys, kind="mergesort")
+        n_stamped = stamp_engine_version(df)     # rows run from a copy without git metadata
         out = results_dir / f"{proto_dir.name}.csv"
         df.to_csv(out, index=False, float_format="%.10e")
-        log(f"merged {len(files)} shards -> {out}: {len(df)} rows ({n0 - len(df)} duplicates dropped)")
+        log(f"merged {len(files)} shards -> {out}: {len(df)} rows ({n0 - len(df)} duplicates dropped, "
+            f"{n_stamped} engine_version stamped by commit time)")
 
 
 # --------------------------------------------------------------------------
@@ -318,6 +392,8 @@ def main(argv=None) -> int:
     ap.add_argument("--quick", action="store_true", help="4 seeds, one config per group")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--merge", action="store_true", help="merge shards into results/v2/<protocol>.csv and exit")
+    ap.add_argument("--stamp-engine-version", action="store_true",
+                    help="fill engine_version = unknown in results/v2/<protocol>.csv from the row timestamp and exit")
     ap.add_argument("--label", default=None)
     ap.add_argument("--gpu-slots", type=int, default=22)
     ap.add_argument("--cpu-slots", type=int, default=64)
@@ -329,6 +405,9 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
 
     results_dir = Path(args.results_dir)
+    if args.stamp_engine_version:
+        stamp_engine_version_files(results_dir)
+        return 0
     if args.merge:
         merge(results_dir)
         return 0

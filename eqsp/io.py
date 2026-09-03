@@ -1,10 +1,9 @@
 """RNG streams, shard paths, CSV rows (no jax import).
 
-RNG conventions (plan, 'RNG plan'):
+RNG conventions:
 * per-eps stream   eps_rng(seed, eps)  = default_rng(seed + (int(eps*1e8) % 2**31))
-                   (sim:239, bh:235, ed:363, cb:507, sq:66; note the precedence)
-* run-level stream seed_rng(seed)      = default_rng(seed)               (cb:465, sq:141)
-* new streams      stream_rng(seed, eps, *extra) = default_rng(SeedSequence([seed, eps_key, *extra]))
+* run-level stream seed_rng(seed)      = default_rng(seed)      (quenched offsets, once per seed)
+* extra streams    stream_rng(seed, eps, *extra) = default_rng(SeedSequence([seed, eps_key, *extra]))
 """
 from __future__ import annotations
 
@@ -22,7 +21,7 @@ from .config import CSV_COLUMNS, RunSpec
 # RNG
 # --------------------------------------------------------------------------
 def eps_key(eps: float) -> int:
-    """int(eps*1e8) % 2**31, the legacy per-eps seed offset."""
+    """int(eps*1e8) % 2**31, the per-eps seed offset."""
     return int(eps * 1e8) % (2**31)
 
 
@@ -47,17 +46,17 @@ def _g(x: float) -> str:
 
 def config_key(spec: RunSpec) -> str:
     """Filesystem-safe key of everything that identifies a cell except protocol
-    and seed (hwindow: the N grid varies inside one shard, so N_fixed is excluded)."""
+    and seed (hwindow: the N grid varies inside one shard, so N_fixed is excluded).
+    The constant ``h0`` and ``exact`` segments mirror the two constant CSV columns and
+    keep the shard names the ones the v2 suite wrote, so a rerun resumes on them."""
     parts = [
         spec.mode_label(),
-        f"g{_g(spec.gamma)}", f"h{_g(spec.h)}", f"s{_g(spec.sigma)}", f"L{spec.L}",
+        f"g{_g(spec.gamma)}", "h0", f"s{_g(spec.sigma)}", f"L{spec.L}",
         f"q{_g(spec.q)}", f"k{_g(spec.k)}", f"F{_g(spec.F)}",
-        spec.estimator, spec.model,
+        spec.estimator, "exact",
     ]
     if spec.extended:
         parts.append("ext")
-    if spec.stop == "legacy":
-        parts.append("legacy")
     if spec.protocol == "hwindow":
         parts.append(f"eps{_g(spec.eps_tar)}")
     return "_".join(parts)
@@ -87,14 +86,14 @@ def make_row(spec: RunSpec, seed: int, eps: float, result, engine_version: str, 
         "seed": int(seed),
         "epsilon": float(eps),
         "gamma": float(spec.gamma),
-        "h": float(spec.h),
+        "h": 0.0,                              # constant column (no heterogeneous gamma_k in v2)
         "sigma_epsilon": float(spec.sigma),
         "L": int(spec.L),
         "q": float(spec.q),
         "k": float(spec.k),
         "F": float(spec.F),
         "estimator": spec.estimator,
-        "model": spec.model,
+        "model": "exact",                      # constant column (the exact likelihood model)
         "total_resources": int(ctr.resources),
         "converged": bool(result.converged),
         "final_error": float(result.error),
@@ -108,7 +107,7 @@ def make_row(spec: RunSpec, seed: int, eps: float, result, engine_version: str, 
         "sum_F_obs": float(ctr.sum_F_obs),
         "sum_M_sq": float(ctr.sum_M_sq),
         "M_exec_max": int(ctr.M_exec_max) if ctr.M_exec_max > 0 else nan,
-        "stop_rule": spec.stop,
+        "stop_rule": "posterior",              # constant column (the posterior stopping rule)
         "posterior_std": ctr.posterior_std,
         "engine_version": engine_version,
         "jax_version": jax_version,
@@ -123,7 +122,7 @@ def make_row(spec: RunSpec, seed: int, eps: float, result, engine_version: str, 
 
 def write_rows(path, rows: list[dict]) -> None:
     """Append rows under an exclusive flock; header only on an empty file;
-    float format %.10e (sim:291-292)."""
+    float format %.10e."""
     if not rows:
         return
     path = Path(path)
@@ -140,7 +139,11 @@ def write_rows(path, rows: list[dict]) -> None:
 
 
 def git_short_sha(repo_dir) -> str:
-    """Numerics git short SHA for the engine_version column ('unknown' if unavailable)."""
+    """Numerics git short SHA for the engine_version column.
+
+    Falls back to an ``ENGINE_VERSION`` file at the repo root, which the deploy step
+    writes (``git rev-parse --short HEAD > ENGINE_VERSION``) so that an rsync copy
+    without git metadata still stamps its rows; 'unknown' if neither is available."""
     import subprocess
     try:
         out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(repo_dir),
@@ -150,6 +153,12 @@ def git_short_sha(repo_dir) -> str:
             dirty = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
                                    cwd=str(repo_dir), capture_output=True, text=True, timeout=10)
             return sha + ("-dirty" if dirty.stdout.strip() else "")
-    except Exception:   # no git binary, not a repo, or the timeout: the column records "unknown" rather than aborting the run
+    except Exception:   # no git binary, not a repo, or the timeout: fall through to the file
+        pass
+    try:
+        stamp = (Path(repo_dir) / "ENGINE_VERSION").read_text().strip()
+        if stamp:
+            return stamp
+    except Exception:   # no deploy stamp either: record "unknown" rather than abort the run
         pass
     return "unknown"

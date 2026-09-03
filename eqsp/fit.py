@@ -1,7 +1,6 @@
 """Scaling-exponent and prefactor fits shared by scripts/analyze.py and scripts/plot.py.
 
-Convention (the one the committed paper tables were built from; see "Legacy
-disagreements" below for where the old analyzers differed):
+Convention (the one every paper table is built from):
 
 Rows entering the alpha fit
     For one cell (a group of GROUP_KEYS) and one seed, the rows with
@@ -28,30 +27,11 @@ Converged (%)
     Always the converged fraction over every row of the cell (all 60 targets
     times all seeds), for both windows.  It never uses the window subset.
 Window shift
-    shift = alpha_full - alpha_asymptotic for the cell (replaces the paper's
-    untraceable WLS sentence).
+    shift = alpha_full - alpha_asymptotic for the cell.
 Prefactor C (tab:prefactor-results)
     Geometric mean of total_resources * epsilon over the converged rows of the
-    cell pooled across seeds, over the full range (reanalysis_within_hamiltonian
-    .py:52-64); sem_logC = std(ddof=1)/sqrt(n_rows) of log(T*eps).
-
-Legacy disagreements (all scripts under scripts/ at tag v1-jax-suite)
-    analyze_results.py:16-37, analyze_combined.py:21-87, analyze_bare_hamiltonian
-    .py:21-35, analyze_sequential.py, plot_redesigned.py:79-91 all use the
-    convention above (lstsq, full min_points 10, asymptotic min_points 5).
-    reanalysis_within_hamiltonian.py:30-49 uses numpy.polyfit, full range only,
-    min_points 4 (its alpha column is not printed in the paper; on the
-    committed bare_hamiltonian.csv min_points 4 and 10 retain the same 40 seeds
-    and give identical alpha).  compare_quenched_vs_marg.py:22-38 uses
-    scipy.stats.linregress on eps < 1e-2 with min_points 3 (only feeds the
-    quenched-vs-marginalized aside).  analyze_results.py also has a third
-    "deep" window (eps < 1e-3, min_points 3) that no table uses; dropped.
-    None of the legacy scripts deduplicated rows: ed_full_likelihood.csv and
-    ed_postselect.csv carry seed 1 of (L=1, gamma=0.01) twice (identical rows,
-    so alpha is unchanged but the pooled prefactor moves from 197.4 to 198.7,
-    which is where the paper's 199 comes from), and bare_ghz.csv carries seeds
-    1 and 2 of gamma=0 twice with different resources (full-range alpha 1.151
-    with duplicates, 1.152 without).
+    cell pooled across seeds, over the full range; sem_logC =
+    std(ddof=1)/sqrt(n_rows) of log(T*eps).
 """
 from __future__ import annotations
 
