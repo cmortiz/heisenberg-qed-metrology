@@ -335,7 +335,7 @@ def figure4(df, nums, out):
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel(r"Probe size $N$")
-    ax.set_ylabel(r"Total resources $T$ at $\varepsilon_{\mathrm{tar}} = 10^{-3}$")
+    ax.set_ylabel(r"Total resources $T$ at $\varepsilon_{\mathrm{tar}} = 2 \times 10^{-2}/N_*$")
     ax.legend(handles=legend, loc="upper left", fontsize=6.3, handlelength=1.8, labelspacing=0.3)
     save(fig, out, "fig4_heisenberg_window")
 
@@ -406,7 +406,7 @@ def figure5(df, nums, out):
                                    label=f"{name}{'' if L is None else f' L={L}'}, {est}"))
     ax_b.axhline(1.0, color=REF_COLOR, ls="--", lw=0.7, zorder=1)
     ax_b.axhline(2.0, color=REF_COLOR, ls=":", lw=0.7, zorder=1)
-    ax_b.set_xlabel(r"Entangling-gate fidelity $k$ (visibility $k^{n-1}F$)")
+    ax_b.set_xlabel(r"Entangling-gate fidelity $k$")
     ax_b.set_ylabel(r"Asymptotic exponent $\alpha$")
     ax_b.text(-0.16, 1.02, "(b)", transform=ax_b.transAxes, fontweight="bold", fontsize=9, va="bottom")
     if ks:

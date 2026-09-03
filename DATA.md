@@ -35,7 +35,7 @@ and `min_points` are those of the element's `.alpha` entries; every entry also c
 | Table `tab:bare-within-model` (bare GHZ adaptive N by $\gamma$; replaces the depolarizing `tab:scaling-results`) | `tab_bare_within_model.{g}.alpha`, `.alpha_asymptotic`, `.window_shift`, `.converged_pct`, `.C` | `bare_adaptive.csv` | full, 10 | analyze -> `tables/tab_bare_within_model.tex` |
 | Fig. 2 `fig:inference-comparison` (asymptotic alpha and Converged % bars, bare and ED L=1,2,3, PS vs FL) | `fig2.alpha.bare_{g}`, `fig2.conv.bare_{g}`, `fig2.alpha.ed_L{L}_{g}_{edfl,rej}`, `fig2.conv.ed_...` | `bare_adaptive.csv`, `ed.csv` | asymptotic, 5 (conv over all 60 targets) | analyze; `plot.py --figs fig2` -> `fig2_inference_comparison` |
 | Table `tab:error-detected-results` | `tab_ed.L{L}_{g}.{edfl,rej}.alpha`, `.alpha_full`, `.window_shift`, `.converged_pct`, `.C`, `.accept_pct` | `ed.csv` | asymptotic, 5 | analyze -> `tables/tab_error_detected.tex` |
-| Table `tab:combined-results` ($\sigma_\varepsilon \in \{0.01, 0.05\}$; ED-FL, rejection, marg) | `tab_combined.L{L}_{g}_{s}.{edfl,rej,marg}.alpha`, `.alpha_full`, `.window_shift`, `.converged_pct`, `.C`, `.accept_pct` | `combined.csv` | asymptotic, 5 | analyze -> `tables/tab_combined.tex` |
+| Table `tab:combined-results` ($\sigma_\varepsilon \in \{0.01, 0.05\}$; ED-FL, rejection, marg) and the quenched-vs-marginalized paragraph (`text.marg.*`: noise floor, $M^{\mathrm{opt}}$, below-floor alpha for the uncapped and capped runs) | `tab_combined.L{L}_{g}_{s}.{edfl,rej,marg,margcap}.alpha`, `.alpha_full`, `.window_shift`, `.converged_pct`, `.C`, `.accept_pct` | `combined.csv` | asymptotic, 5 | analyze -> `tables/tab_combined.tex` |
 | Fig. 3 `fig:combined-protocol` (combined ED-FL at (L=1, 1%), (L=1, 10%), (L=2, 10%), $\sigma = 0.01$) | `fig3.alpha.combined_L{L}_{g}_s0.01` | `combined.csv` | asymptotic, 5 | analyze; `plot.py --figs fig3` -> `fig3_combined_protocol` |
 | Table `tab:sequential-results` | `tab_sequential.L{L}_{s}.alpha` (`.n_seeds` is the Seeds column), `.alpha_asymptotic`, `.window_shift`, `.converged_pct`, `.C` | `sequential.csv` | full, 10 | analyze -> `tables/tab_sequential.tex` |
 | Table `tab:realistic-noise` and Fig. 5 (readout flips q; prep infidelity k, F; mismatched vs aware) | `tab_realistic.readout.{bare,ed,ed_rej,combined,combined_rej,sequential}[_L{L}]_{q}_{estimator}.alpha`, `.converged_pct`, `.C`; `tab_realistic.prep.{...}[_L{L}]_{k}_{estimator}.*`; `text.readout.n_breakdown_{q}`; `text.prep.n_star_{k}` | rows with `q > 0` or `k < 1` or `F < 1` in `bare_adaptive.csv`, `ed.csv`, `combined.csv`, `sequential.csv` | asymptotic, 5 | analyze -> `tables/tab_realistic_{readout,prep}.tex`; `plot.py --figs fig5` -> `fig5_realistic` |
@@ -83,7 +83,8 @@ engine_version, jax_version, timestamp
 
 Grouping keys (`GROUP_KEYS`): `protocol, mode, gamma, h, sigma_epsilon, L, q, k, F, estimator, model, stop_rule`. `mode` keeps the
 legacy labels (`bare_hamiltonian`, `ed_full_likelihood`, `ed_postselect`, `combined_full_likelihood`,
-`combined_postselect`, `combined_full_likelihood_marg`, `sequential`) plus `bare_hamiltonian_adaptive` and `hwindow`.
+`combined_postselect`, `combined_full_likelihood_marg`, `sequential`) plus `bare_hamiltonian_adaptive`, `hwindow`, and
+`combined_full_likelihood_marg_capped` (marg with the depth capped at $M^{\mathrm{opt}} = 1/(2\sigma_\varepsilon\sqrt{N_{\mathrm{total}}})$; `--marg-cap`).
 The alpha fit reads only `seed, epsilon, total_resources, converged`. `--merge` sorts by the grouping keys plus
 `seed, epsilon` (plus `N` for hwindow) and `timestamp`, then deduplicates on those keys keeping the last row.
 `engine_version` is the numerics git short SHA (`-dirty` if the tree had uncommitted tracked changes),

@@ -32,7 +32,7 @@ eqsp/fit.py                     the one OLS alpha fit (two windows), prefactor, 
 eqsp/protocols/bare_adaptive.py bare GHZ, Hamiltonian noise, N = clip(floor(1/eps), 10, 16384), n ~ U{1..N}, M = 1
 eqsp/protocols/bare_fixed.py    bare GHZ, Hamiltonian noise, fixed odd N = 2L+1, M ~ U{1..M_max}
 eqsp/protocols/ed.py            error-detected GHZ, one [[2L+1, 1]] repetition block, inference fl | ps
-eqsp/protocols/combined.py      logical GHZ over three blocks, per-qubit offsets, inference fl | ps | marg
+eqsp/protocols/combined.py      logical GHZ over three blocks, per-qubit offsets, inference fl | ps | marg (--marg-cap caps M at 1/(2 sigma sqrt(N_total)))
 eqsp/protocols/sequential.py    sequential binary search with product-state probes (NumPy only)
 eqsp/protocols/hwindow.py       Heisenberg-window sweep T(N) at fixed eps_tar with shot-to-shot offsets
 scripts/run.py                  CLI: one protocol, one or more seeds, one shard per seed
@@ -135,13 +135,13 @@ eps <= 1.8e-4; rerun after the fix). Rows without a saturated grid point are bit
 | 1 | `bare_adaptive`, $\gamma \in \{0, 0.01, 0.05, 0.10\}$ | 4 |
 | 2 | `bare_fixed`, $L \in \{1,2,3\} \times \gamma \in \{0.01, 0.05, 0.10\}$ | 9 |
 | 3 | `ed`, same grid $\times$ {fl, ps} | 18 |
-| 4 | `combined`, $L \in \{1,2\} \times \gamma \times \sigma_\varepsilon \in \{0.01, 0.05\} \times$ {fl, ps}, plus marg at $(1, 0.01, 0.01)$ | 25 |
+| 4 | `combined`, $L \in \{1,2\} \times \gamma \times \sigma_\varepsilon \in \{0.01, 0.05\} \times$ {fl, ps}, plus marg and marg-capped at $(1, 0.01, 0.01)$ | 26 |
 | 5 | `sequential`, $L \in \{1,2,3\} \times \sigma_\varepsilon \in \{0, 0.01, 0.05\}$ | 9 |
 | 6 | `hwindow`, $\sigma_\varepsilon \in \{0.05, 0.10\}$, $\varepsilon_{\rm tar} = 4 \times 10^{-2}\sigma_\varepsilon^2$ ($10^{-4}$, $4 \times 10^{-4}$), 12 N values in $[N^*/16, 4N^*]$ | 2 |
 | 7 | readout $q \in \{10^{-3}, 10^{-2}, 3\cdot10^{-2}\} \times$ {mismatched, aware} $\times$ {bare_adaptive $\gamma{=}0.10$, ed-fl $L{=}1..3$, combined-fl $L{=}1,2$ $\sigma{=}0.01$}, plus sequential $L{=}1..3$ (q only) | 45 |
 | 8 | prep $k \in \{0.99, 0.995, 0.999\}$, $F = 0.99$, same protocols and estimators; sequential $F$ only | 39 |
 
-151 configs $\times$ 40 seeds = 6,040 jobs, 358,560 rows (the two window configs
+152 configs $\times$ 40 seeds = 6,080 jobs, 360,960 rows (the two window configs
 produce 12 rows per seed instead of 60). `--quick` runs 4 seeds and one config per group.
 
 ### Running

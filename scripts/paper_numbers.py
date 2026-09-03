@@ -77,6 +77,8 @@ def _val(entry):
 def fmt(key: str, entry) -> str:
     v, sem = _val(entry)
     if v is None or (isinstance(v, float) and math.isnan(v)):
+        if isinstance(entry, dict) and entry.get("n_seeds") == 0:
+            return "--"                                # cell ran but no seed retained min_points converged targets in the window
         return r"\textcolor{red}{[NaN " + key + "]}"
     if isinstance(v, (list, tuple)):                  # [min, max] range: "a" if equal after rounding, else "a--b"
         base = key.replace("_range", "")
@@ -86,12 +88,14 @@ def fmt(key: str, entry) -> str:
             lo, hi = (fmt(base, {"value": x}) for x in v)
         return lo if lo == hi else f"{lo}\\text{{--}}{hi}"
     last = key.rsplit(".", 1)[-1]
+    if key.startswith("text.fisher_saturation"):
+        return f"{v:.3f}"                              # saturation ratios sit within a few percent of 1
     if last.startswith("alpha"):
         if sem is not None and not math.isnan(sem):
             return f"{v:.2f} \\pm {sem:.2f}" if sem >= 0.005 else f"{v:.3f} \\pm {sem:.3f}"
         return f"{v:.2f}"
     if last in ("converged_pct", "conv") or last.startswith("conv"):
-        return f"{v:.0f}"
+        return f"{v:.1f}" if "min" in last else f"{v:.0f}"   # a minimum keeps one decimal so "at least 99.6%" never rounds to 100
     if last.startswith("accept"):
         return f"{v:.1f}"
     if last.startswith("N_argmin") or last.startswith("M_exec") or last.startswith("M_max") or last.startswith("n_"):
