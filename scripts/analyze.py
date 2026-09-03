@@ -345,7 +345,8 @@ def numbers_combined(cells: pd.DataFrame, nums: dict) -> None:
     comb = cc[cc["protocol"] == "combined"]
     ratios = {}
     for _, row in comb.iterrows():
-        mode = {"combined_full_likelihood": "edfl", "combined_postselect": "rej", "combined_full_likelihood_marg": "marg"}[row["mode"]]
+        mode = {"combined_full_likelihood": "edfl", "combined_postselect": "rej",
+                "combined_full_likelihood_marg": "marg", "combined_full_likelihood_marg_capped": "margcap"}[row["mode"]]
         L, g, s = int(row["L"]), float(row["gamma"]), float(row["sigma_epsilon"])
         cell = f"L{L}_{gk(g)}_{sk(s)}"
         add_bundle(nums, f"tab_combined.{cell}.{mode}", cell_entries(row, "asymptotic"))
@@ -413,6 +414,80 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
                                                                 f"[min, max] over L of the asymptotic-window alpha at sigma = {s:g}", window="full")
         nums[f"text.sequential.conv_{tag}_range"] = range_entry(rows["converged_pct"], rows["source_csv"].iloc[0],
                                                                 f"[min, max] over L of Converged (%) at sigma = {s:g}")
+
+    # The binary-search cost schedule is deterministic: T at fixed eps_tar varies by less than
+    # a fraction of a percent across seeds and not at all with sigma_epsilon, so the exponent can
+    # be fitted on all 60 targets.  The sigma-dependence of the converged-row fit in
+    # tab:sequential-results is the truncation of the fit to the targets that converged.
+    sched_full, sched_asym, spread = [], [], []
+    for (_L, _s), cell in seq.groupby(["L", "sigma_epsilon"]):
+        g = cell.groupby("epsilon")["total_resources"].mean()
+        e_all, T_all = g.index.to_numpy(float), g.to_numpy(float)
+        sched_full.append(fit.fit_seed(e_all, T_all)[0])
+        m = e_all < fit.WINDOWS["asymptotic"][0]
+        if m.sum() >= fit.WINDOWS["asymptotic"][1]:
+            sched_asym.append(fit.fit_seed(e_all[m], T_all[m])[0])
+        per_eps = cell.groupby("epsilon")["total_resources"].agg(["min", "max"])
+        spread.append(float(((per_eps["max"] - per_eps["min"]) / per_eps["max"]).max()))
+    nums["text.sequential.alpha_schedule_range"] = range_entry(
+        pd.Series(sched_full), src, "[min, max] over all (L, sigma_epsilon) cells of the full-range alpha fitted "
+        "on the seed-mean cost at all 60 targets, converged or not (the schedule is deterministic)", window="full")
+    nums["text.sequential.alpha_schedule_asym_range"] = range_entry(
+        pd.Series(sched_asym), src, "[min, max] over all (L, sigma_epsilon) cells of the asymptotic-window alpha "
+        "fitted on the seed-mean cost at all targets", window="asymptotic")
+    nums["text.sequential.T_seed_spread_pct"] = scalar_entry(
+        100.0 * max(spread), src, "largest relative spread (max - min)/max of the total cost across seeds at a "
+        "fixed eps_tar, over all sequential cells")
+
+
+def numbers_marg(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> None:
+    """Marginalised-inference cells: the offset noise floor, the information-optimal depth cap,
+    and what each estimator does below the floor (Appendix~F, quenched vs marginalised)."""
+    marg = clean(df[df["mode"].astype(str).str.startswith("combined_full_likelihood_marg")])
+    if marg.empty:
+        return
+    src = marg["source_csv"].iloc[0]
+    N_tot = float(marg["N_total"].iloc[0])
+    sigma = float(marg["sigma_epsilon"].iloc[0])
+    floor = sigma / math.sqrt(N_tot)
+    M_cap = math.ceil(1.0 / (2.0 * sigma * math.sqrt(N_tot)))
+    nums["text.marg.eps_floor"] = scalar_entry(
+        floor, src, "offset noise floor sigma_epsilon / sqrt(N_total) of the marginalised cell")
+    nums["text.marg.M_cap"] = scalar_entry(
+        float(M_cap), src, "information-optimal depth ceil(1 / (2 sigma_epsilon sqrt(N_total))), the peak of "
+        "4 M^2 N^2 exp(-4 M^2 N sigma_epsilon^2)")
+    eps_min = float(np.min(marg["epsilon"]))
+    nums["text.marg.eps_min"] = scalar_entry(eps_min, src, "smallest target of the eps grid")
+    for mode, tag in (("combined_full_likelihood_marg", "uncapped"),
+                      ("combined_full_likelihood_marg_capped", "capped")):
+        cell = marg[marg["mode"] == mode]
+        if cell.empty:
+            continue
+        at_min = cell[np.isclose(cell["epsilon"], eps_min)]
+        nums[f"text.marg.conv_{tag}_min_eps"] = scalar_entry(
+            100.0 * float(fit.coerce_converged(at_min["converged"]).mean()), src,
+            f"Converged (%) of the {tag} marginalised cell at the smallest target")
+        nums[f"text.marg.M_max_{tag}_min_eps"] = scalar_entry(
+            float(at_min["M_max"].max()), src, f"depth ceiling M_max of the {tag} cell at the smallest target")
+        conv = cell[fit.coerce_converged(cell["converged"])]
+        below = conv[conv["epsilon"] < floor]
+        g = below.groupby("epsilon")["total_resources"].mean()
+        if len(g) >= fit.WINDOWS["asymptotic"][1]:
+            nums[f"text.marg.alpha_below_floor_{tag}"] = scalar_entry(
+                fit.fit_seed(g.index.to_numpy(float), g.to_numpy(float))[0], src,
+                f"alpha of the seed-mean converged cost of the {tag} cell on the targets below the noise floor",
+                window="below_floor")
+        # the same fit restricted to targets where the cell still converges on most seeds
+        ok = [e for e, sd in cell.groupby("epsilon") if fit.coerce_converged(sd["converged"]).mean() >= 0.9]
+        gg = conv[conv["epsilon"].isin(ok) & (conv["epsilon"] < floor)].groupby("epsilon")["total_resources"].mean()
+        if len(gg) >= fit.WINDOWS["asymptotic"][1]:
+            nums[f"text.marg.alpha_below_floor_converged_{tag}"] = scalar_entry(
+                fit.fit_seed(gg.index.to_numpy(float), gg.to_numpy(float))[0], src,
+                f"alpha of the {tag} cell below the noise floor, restricted to targets that converge on at least "
+                "90% of seeds", window="below_floor")
+            nums[f"text.marg.eps_reach_{tag}"] = scalar_entry(
+                float(min(gg.index)), src,
+                f"smallest target at which the {tag} cell still converges on at least 90% of seeds")
 
 
 def numbers_realistic(cells: pd.DataFrame, nums: dict) -> None:
@@ -575,7 +650,7 @@ def numbers_shift(cells: pd.DataFrame, nums: dict) -> None:
     cc = clean_cells(cells[cells["shift_full_minus_asym"].notna()])
     if cc.empty:
         return
-    edc = cc[cc["protocol"].isin(["ed", "combined"]) & (cc["mode"] != "combined_full_likelihood_marg")]
+    edc = cc[cc["protocol"].isin(["ed", "combined"]) & ~cc["mode"].str.startswith("combined_full_likelihood_marg")]
     if not edc.empty:
         worst = edc.loc[edc["shift_full_minus_asym"].abs().idxmax()]
         nums["text.fit.window_shift_max"] = scalar_entry(
@@ -594,6 +669,7 @@ def build_numbers(cells, hw, fs, df) -> dict:
     numbers_prefactor(cells, nums)
     numbers_combined(cells, nums)
     numbers_sequential(cells, df, nums)
+    numbers_marg(cells, df, nums)
     numbers_realistic(cells, nums)
     numbers_hwindow(hw, nums)
     numbers_fisher(fs, nums)
