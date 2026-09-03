@@ -1,0 +1,8 @@
+protocol,mode,gamma,h,sigma_epsilon,L,q,k,F,estimator,model,source_csv,n_seeds_run,n_rows,converged_pct,shift_full_minus_asym,C,sem_logC,n_rows_C,accept_pct,alpha_full,sem_full,ci95_full,intercept_full,n_seeds_full,n_rows_full,alpha_asymptotic,sem_asymptotic,ci95_asymptotic,intercept_asymptotic,n_seeds_asymptotic,n_rows_asymptotic
+bare_adaptive,bare_hamiltonian_adaptive,0.05,0,0,1,0,1,1,mismatched,exact,bare_adaptive.csv,4,240,99.5833,-0.101719,102.433,0.0614546,239,100,0.779991,0.0193453,0.0615653,5.89873,4,239,0.88171,0.0406241,0.129284,5.12556,4,160
+bare_fixed,bare_hamiltonian,0.05,0,0,1,0,1,1,mismatched,exact,bare_fixed.csv,4,240,94.5833,-0.0148768,234.197,0.046239,227,100,1.04464,0.0139073,0.0442593,5.20851,4,227,1.05952,0.0257027,0.0817976,5.09987,4,147
+combined,combined_full_likelihood,0.05,0,0.01,1,0,1,1,mismatched,exact,combined.csv,4,240,100,-0.277111,13.66,0.0637657,240,100,0.81496,0.0318647,0.101408,3.67964,4,240,1.09207,0.0342682,0.109057,1.69258,4,160
+ed,ed_full_likelihood,0.05,0,0,1,0,1,1,mismatched,exact,ed.csv,4,240,100,-0.0457778,14.159,0.0439367,240,100,1.02045,0.0150269,0.0478224,2.53261,4,240,1.06623,0.0436625,0.138953,2.2005,4,160
+ed,ed_full_likelihood,0.1,0,0,1,0,0.99,0.99,aware,exact,ed.csv,4,240,100,-0.0126905,8.8887,0.0333453,240,100,1.09954,0.0140186,0.0446135,1.61177,4,240,1.11223,0.0217004,0.0690604,1.52283,4,160
+ed,ed_full_likelihood,0.1,0,0,1,0.01,1,1,aware,exact,ed.csv,4,240,100,0.0016015,9.39889,0.0361305,240,100,1.10936,0.0162004,0.0515568,1.61106,4,240,1.10776,0.0327538,0.104237,1.62902,4,160
+sequential,sequential,0,0,0,1,0,1,1,mismatched,exact,sequential.csv,4,240,85.4167,0.0120437,100.982,0.0139242,205,0,0.996341,0.00329379,0.0104823,4.63451,4,205,0.984297,0.00798585,0.0254145,4.71553,4,126

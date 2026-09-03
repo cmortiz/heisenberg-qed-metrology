@@ -36,12 +36,16 @@ class Combined:
         self.fl = spec.inference == "fl"
         self.theorem = spec.model == "theorem"
         self.marg = bool(spec.marg)
+        self.marg_cap = bool(spec.marg_cap)
         if self.marg and not self.fl:
             raise ValueError("combined: marg requires inference=fl (mode combined_full_likelihood_marg)")
+        if self.marg_cap and not (self.marg and spec.sigma > 0):
+            raise ValueError("combined: marg_cap requires marg with sigma > 0")
         if spec.h > 0 and not self.theorem:
             raise ValueError("combined: h > 0 is supported only with model=theorem")
         self.Nc = spec.N_code
         self.N = N_BLOCKS * self.Nc
+        self.M_cap = max(1, int(math.ceil(1.0 / (2.0 * spec.sigma * math.sqrt(self.N))))) if self.marg_cap else 0
         if self.theorem:
             self.period, self.grid_offset = 2.0 * float(np.pi), 0.0        # legacy [0, 2pi)
         else:
@@ -93,6 +97,12 @@ class Combined:
         M_max = max(1, int(1.0 / (eps * N)))                             # cb:209
         nyquist_limit = H.nyquist_cap(self.m, N, self.period)            # cb:210-211 on a 2 pi grid
         M_max = min(M_max, max(1, nyquist_limit))
+        if self.marg_cap:
+            # Information-optimal depth under marginalised offsets: 4 M^2 N^2 exp(-4 M^2 N sigma^2)
+            # peaks at M = 1/(2 sigma sqrt(N)) (Corollary~ref{cor:heisenberg-threshold} read at
+            # depth M).  Without this cap the uniform draw on {1..M_max} spends an eps-shrinking
+            # fraction of its shots at zero visibility.
+            M_max = min(M_max, self.M_cap)
         self.M_max = M_max
         n_exp = self.cfg.max_experiments
         self.draws = {}

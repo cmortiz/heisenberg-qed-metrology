@@ -97,7 +97,9 @@ def suite_configs(quick: bool) -> dict[int, list[RunSpec]]:
     g[2] = [RunSpec("bare_fixed", gamma=x, L=L) for L, x in BARE_HAM_GRID]
     g[3] = [RunSpec("ed", gamma=x, L=L, inference=inf) for L, x in ED_GRID for inf in ("fl", "ps")]
     g[4] = ([RunSpec("combined", gamma=x, L=L, sigma=s, inference=inf) for L, x, s in COMB_GRID for inf in ("fl", "ps")]
-            + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True) for L, x, s in MARG_CONFIGS])
+            + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True) for L, x, s in MARG_CONFIGS]
+            + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True, marg_cap=True)
+               for L, x, s in MARG_CONFIGS])
     g[5] = [RunSpec("sequential", L=L, sigma=s) for L, s in SEQ_GRID]
     g[6] = [RunSpec("hwindow", sigma=s, eps_tar=WINDOW_EPS(s)) for s in WINDOW_SIGMAS]
     g[7] = []
@@ -146,6 +148,8 @@ def job_args(job: Job) -> list[str]:
             "--F", repr(s.F), "--estimator", s.estimator, "--model", s.model]
     if s.marg:
         args.append("--marg")
+    if s.marg_cap:
+        args.append("--marg-cap")
     if s.extended:
         args.append("--extended")
     if s.protocol == "hwindow":

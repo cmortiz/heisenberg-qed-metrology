@@ -434,3 +434,35 @@ def test_exact_ed_update_finite_when_syndrome_probability_saturates():
         assert abs(float(jnp.exp(out).sum()) - 1.0) < 1e-4
     out = H.syndrome_update_homogeneous(logpk, p_grid, 0, N)
     assert bool(jnp.isfinite(out).all())
+
+
+def test_marg_cap_limits_depth_to_the_information_optimal_M():
+    """marg_cap caps the uniform depth draw at M = 1/(2 sigma sqrt(N_total)), the peak of
+    4 M^2 N^2 exp(-4 M^2 N sigma^2); without it the draw reaches 1/(eps N_total)."""
+    import numpy as np
+    from eqsp.config import RunSpec
+    import eqsp.protocols.combined as C
+
+    sigma, N_total = 0.01, 9
+    M_opt = 1.0 / (2.0 * sigma * math.sqrt(N_total))
+    capped = C.make(RunSpec("combined", gamma=0.01, L=1, sigma=sigma, inference="fl", marg=True, marg_cap=True))
+    plain = C.make(RunSpec("combined", gamma=0.01, L=1, sigma=sigma, inference="fl", marg=True))
+    assert capped.M_cap == math.ceil(M_opt)
+    for p in (capped, plain):
+        p.begin_run(1, 20)
+    for eps in (1e-2, 1e-3, 1e-4):
+        capped.begin_epsilon(eps, np.random.default_rng(0))
+        plain.begin_epsilon(eps, np.random.default_rng(0))
+        assert capped.M_max == min(plain.M_max, capped.M_cap)
+        assert capped.M_max <= math.ceil(M_opt)
+    assert capped.spec.mode_label() == "combined_full_likelihood_marg_capped"
+
+
+def test_marg_cap_requires_marg_with_offsets():
+    from eqsp.config import RunSpec
+    import eqsp.protocols.combined as C
+
+    with pytest.raises(ValueError):
+        C.make(RunSpec("combined", gamma=0.01, L=1, sigma=0.01, inference="fl", marg_cap=True))
+    with pytest.raises(ValueError):
+        C.make(RunSpec("combined", gamma=0.01, L=1, sigma=0.0, inference="fl", marg=True, marg_cap=True))

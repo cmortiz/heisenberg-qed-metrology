@@ -36,6 +36,7 @@ class RunSpec:
     sigma: float = 0.0                        # shot-to-shot signal offset std (combined, sequential, hwindow)
     inference: Literal["fl", "ps"] = "fl"     # full-likelihood vs post-selection (rejection) for ed/combined
     marg: bool = False                        # combined marginalised-visibility inference
+    marg_cap: bool = False                    # marg: cap the depth at the information-optimal M = 1/(2 sigma sqrt(N_total))
     q: float = 0.0                            # readout flip probability per measured bit
     k: float = 1.0                            # entangling-gate fidelity (prep visibility k^(n-1) F)
     F: float = 1.0                            # single-qubit init fidelity
@@ -64,7 +65,7 @@ class RunSpec:
             return "ed_full_likelihood" if self.inference == "fl" else "ed_postselect"
         if self.protocol == "combined":
             if self.marg:
-                return "combined_full_likelihood_marg"
+                return "combined_full_likelihood_marg_capped" if self.marg_cap else "combined_full_likelihood_marg"
             return "combined_full_likelihood" if self.inference == "fl" else "combined_postselect"
         if self.protocol == "sequential":
             return "sequential"
