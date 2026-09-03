@@ -19204,34 +19204,34 @@
   "note": "optimal bare probe size n* = -1/ln k under visibility k^(n-1) F"
  },
  "text.readout.n_breakdown_q0.001": {
-  "value": 500.0,
+  "value": 499.0,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "probe size n = 1/(2q) where the bare parity visibility (1-2q)^n reaches about e^-1"
+  "note": "probe size n = floor(-1/ln(1-2q)) at which the bare parity visibility (1-2q)^n has fallen to e^-1 (about 1/(2q))"
  },
  "text.readout.n_breakdown_q0.01": {
-  "value": 50.0,
+  "value": 49.0,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "probe size n = 1/(2q) where the bare parity visibility (1-2q)^n reaches about e^-1"
+  "note": "probe size n = floor(-1/ln(1-2q)) at which the bare parity visibility (1-2q)^n has fallen to e^-1 (about 1/(2q))"
  },
  "text.readout.n_breakdown_q0.03": {
-  "value": 16.666666666666668,
+  "value": 16.0,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": null,
   "n_seeds": null,
   "n_rows": null,
-  "note": "probe size n = 1/(2q) where the bare parity visibility (1-2q)^n reaches about e^-1"
+  "note": "probe size n = floor(-1/ln(1-2q)) at which the bare parity visibility (1-2q)^n has fallen to e^-1 (about 1/(2q))"
  },
  "text.sequential.M2sigma2_s0.01_eps1e-2": {
   "value": 0.42250000000000004,

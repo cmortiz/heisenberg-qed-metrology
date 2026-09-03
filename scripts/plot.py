@@ -370,7 +370,7 @@ def figure5(df, nums, out):
         eb = entry(nums, f"text.readout.n_breakdown_{qk(q)}")
         if eb:
             ax_a.axvline(2 * q, color=qcolors[q], ls=":", lw=0.7, zorder=1)
-            ax_a.text(2 * q, 0.02, rf"$n{{=}}{eb['value']:.0f}$", transform=ax_a.get_xaxis_transform(), fontsize=5.8,
+            ax_a.text(2 * q, 0.02, rf"$n{{=}}{int(eb['value'])}$", transform=ax_a.get_xaxis_transform(), fontsize=5.8,
                       color=qcolors[q], ha="center", va="bottom", bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="none", alpha=0.85))
     legend += [Line2D([0], [0], color=REF_COLOR, marker="o", ms=2.4, lw=0.9, label="bare GHZ (adaptive $N$)"),
                Line2D([0], [0], color=REF_COLOR, marker="s", ms=2.4, lw=0.9, label=r"ED-FL $L{=}1$"),

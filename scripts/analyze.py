@@ -509,7 +509,7 @@ def numbers_realistic(cells: pd.DataFrame, nums: dict) -> None:
         add_bundle(nums, key, cell_entries(row, "asymptotic"))
         nums[f"{key}.F"] = scalar_entry(row["F"], row["source_csv"], "single-qubit init fidelity of the cell")
     for q in sorted(real.loc[real["q"] > 0, "q"].unique()):
-        nums[f"text.readout.n_breakdown_{qk(q)}"] = scalar_entry(1.0 / (2.0 * q), None, "probe size n = 1/(2q) where the bare parity visibility (1-2q)^n reaches about e^-1")
+        nums[f"text.readout.n_breakdown_{qk(q)}"] = scalar_entry(math.floor(-1.0 / math.log(1.0 - 2.0 * q)), None, "probe size n = floor(-1/ln(1-2q)) at which the bare parity visibility (1-2q)^n has fallen to e^-1 (about 1/(2q))")
     for k in sorted(real.loc[real["k"] < 1, "k"].unique()):
         nums[f"text.prep.n_star_{kk(k)}"] = scalar_entry(-1.0 / math.log(k), None, "optimal bare probe size n* = -1/ln k under visibility k^(n-1) F")
 
