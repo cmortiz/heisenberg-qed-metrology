@@ -119,7 +119,7 @@ def fmt(key: str, entry) -> str:
 
 def data_sha(numbers_path: Path) -> str:
     try:
-        return subprocess.run(["git", "log", "-1", "--format=%h", "--", str(numbers_path)],
+        return subprocess.run(["git", "log", "-1", "--format=%h", "--", numbers_path.name],
                               capture_output=True, text=True, cwd=numbers_path.parent).stdout.strip() or "uncommitted"
     except Exception:
         return "unknown"
