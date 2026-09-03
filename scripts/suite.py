@@ -294,8 +294,8 @@ ENGINE_VERSION_BY_TIME = [
     ("2026-09-02 02:29:44", "715a7f9"),   # hwindow device-side chunked loop
     ("2026-09-02 03:02:42", "870441a"),   # per-shot preparation phase, one-period priors
     ("2026-09-02 16:32:53", "41738d1"),   # P_MAX float32 clip (NaN posterior fix)
-    ("2026-09-02 19:01:32", "59ca007"),   # combined marg_cap
-    ("2026-09-02 21:09:03", "0894be2"),   # analyze/plot/paper_numbers audit fixes
+    ("2026-09-02 19:01:32", "c4daba1"),   # combined marg_cap
+    ("2026-09-02 21:09:03", "b020022"),   # analyze/plot/paper_numbers audit fixes
 ]
 UNKNOWN = "unknown"
 

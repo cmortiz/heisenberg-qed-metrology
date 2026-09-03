@@ -94,6 +94,8 @@ The alpha fit reads only `seed, epsilon, total_resources, converged`. `--merge` 
 
 ### Provenance: the `engine_version` column
 
+History note: on 2026-09-03 the scratch result directories were purged from the git history (`git filter-repo`), which renamed every commit from the marg-cap commit onwards. The SHAs below and in the CSVs are the post-rewrite ones; pre-rewrite SHAs survive only in older paper commits and local notes.
+
 The GPU server is deployed by rsync, so the suite ran from a copy with no git metadata and
 `eqsp/io.py:git_short_sha` wrote `engine_version = unknown` on every row. Two fixes:
 
@@ -116,12 +118,12 @@ The GPU server is deployed by rsync, so the suite ran from a copy with no git me
 |---|---|---|
 | `870441a` 03:02 | per-shot preparation phase, one-period prior windows | the bulk of groups 1-6 (03:03 onwards) |
 | `41738d1` 16:32 | `P_MAX` float32 clip (NaN posterior when a syndrome probability saturates) | groups 7 and 8 from 17:06 onwards |
-| `59ca007` 19:01 | depth-capped marginalised estimator (`--marg-cap`) | the `combined_full_likelihood_marg_capped` cell (19:31-19:52) and the ED $\gamma = 0.10$, $L \in \{1,2\}$ reruns (19:0x-19:2x) |
+| `c4daba1` 19:01 | depth-capped marginalised estimator (`--marg-cap`) | the `combined_full_likelihood_marg_capped` cell (19:31-19:52) and the ED $\gamma = 0.10$, $L \in \{1,2\}$ reruns (19:0x-19:2x) |
 
   Read this way: rows stamped `870441a` or earlier ran **before** the `P_MAX` fix; rows stamped `41738d1`
-  or `59ca007` ran after it. The four ED cells the fix actually changed ($\gamma = 0.10$, $L \in \{1,2\}$,
-  FL and rejection) were rerun and carry `59ca007` on all 9,600 rows. `combined_full_likelihood_marg_capped`
-  exists only after `59ca007`, and every one of its rows carries it.
+  or `c4daba1` ran after it. The four ED cells the fix actually changed ($\gamma = 0.10$, $L \in \{1,2\}$,
+  FL and rejection) were rerun and carry `c4daba1` on all 9,600 rows. `combined_full_likelihood_marg_capped`
+  exists only after `c4daba1`, and every one of its rows carries it.
 
   Two caveats, both verified against the data:
 
@@ -132,7 +134,7 @@ The GPU server is deployed by rsync, so the suite ran from a copy with no git me
   * The 28,800 `sequential` rows of groups 7 and 8 ran at 02:31 and carry `715a7f9`. `sequential` is pure
     NumPy and touches none of the kernels the later commits changed.
 
-Row counts by stamp: `bare_adaptive` 9,600 / 19,506 / 9,294 (`870441a` / `41738d1` / `59ca007`);
+Row counts by stamp: `bare_adaptive` 9,600 / 19,506 / 9,294 (`870441a` / `41738d1` / `c4daba1`);
 `bare_fixed` 21,600 (`870441a`); `combined` 60,000 / 38,400 / 21,600; `ed` 34,080 / 57,120 / 38,400;
 `hwindow` 598 / 362; `sequential` 240 (`a18a0ea`) / 50,160 (`715a7f9`).
 
