@@ -33,7 +33,8 @@ from eqsp.config import GROUP_KEYS, OMEGA_TRUE  # noqa: E402
 V2_DIR = REPO / "results" / "v2"
 
 PROTOCOLS = ["bare_adaptive", "bare_fixed", "ed", "combined", "sequential", "hwindow"]   # files: <results-dir>/<protocol>.csv
-TAB_PREFACTOR_ROWS = [(1, 0.01), (1, 0.05), (1, 0.10), (2, 0.10), (3, 0.10)]   # tab:prefactor-results rows; text.prefactor.* ranges run over the same rows
+TAB_PREFACTOR_ROWS = [(L, g) for L in (1, 2, 3) for g in (0.0, 0.01, 0.05, 0.10)]   # tab:prefactor-results rows; gamma = 0 is the calibration row
+BARE_PREFACTOR_MODE = "bare_hamiltonian_matched"   # the bare column runs the ED depth schedule M ~ U{1..floor(1/(N eps))}; the legacy bare_hamiltonian cells drew M ~ U{1..floor(1/eps)}, N times deeper per shot
 FIG1_BARE_GAMMAS = [0.01, 0.05, 0.10]
 FIG3_CELLS = [(1, 0.01, 0.01), (1, 0.10, 0.01), (2, 0.10, 0.01)]
 WEAK_NOISE_P = [0.01, 0.05, 0.10]
@@ -223,7 +224,8 @@ def numbers_bare(cells: pd.DataFrame, nums: dict) -> None:
 def numbers_bare_fixed(cells: pd.DataFrame, nums: dict) -> None:
     """Bare GHZ at fixed N = 2L+1 under Hamiltonian noise (the bare column of tab:prefactor-results).
     Window: full (the text quotes full-range alpha); emitted for every bare_fixed cell, ED counterpart or not."""
-    for _, row in clean_cells(cells[cells["protocol"] == "bare_fixed"]).iterrows():
+    bf = clean_cells(cells[cells["protocol"] == "bare_fixed"])
+    for _, row in bf[bf["mode"] == BARE_PREFACTOR_MODE].iterrows():
         p = f"tab_prefactor.L{row['L']}_{gk(row['gamma'])}"
         b = cell_entries(row, "full")
         nums[f"{p}.bare_C"] = b["C"]
@@ -249,40 +251,33 @@ def numbers_ed(cells: pd.DataFrame, nums: dict) -> None:
 
 
 def numbers_prefactor(cells: pd.DataFrame, nums: dict) -> None:
-    """tab:prefactor-results: C for bare_fixed, ED-FL, rejection at matched (L, gamma) and their ratios."""
+    """tab:prefactor-results: C for the matched-depth bare probe, ED-FL and rejection at matched (L, gamma).
+
+    All three columns draw M ~ U{1..floor(1/(N eps_tar))} and are charged N * M per shot, so the
+    entries are read at matched resources. No ratios are emitted: the paper states the prefactors.
+    """
     cc = clean_cells(cells)
-    ratios_edfl, ratios_rej = {}, {}
-    for _, bare in cc[cc["protocol"] == "bare_fixed"].iterrows():
+    bare_cells = cc[(cc["protocol"] == "bare_fixed") & (cc["mode"] == BARE_PREFACTOR_MODE)]
+    for _, bare in bare_cells.iterrows():
         L, g = int(bare["L"]), float(bare["gamma"])
         edfl = pick(cc, protocol="ed", mode="ed_full_likelihood", L=L, gamma=g)
         rej = pick(cc, protocol="ed", mode="ed_postselect", L=L, gamma=g)
         if edfl is None and rej is None:
             continue
         p = f"tab_prefactor.L{L}_{gk(g)}"
-        for name, row, store in (("edfl", edfl, ratios_edfl), ("rej", rej, ratios_rej)):
+        for name, row in (("edfl", edfl), ("rej", rej)):
             if row is None:
                 continue
             b = cell_entries(row, "asymptotic")
             nums[f"{p}.{name}_C"] = b["C"]
             nums[f"{p}.{name}_alpha_asym"] = b["alpha"]
             nums[f"{p}.{name}_window_shift"] = b["window_shift"]
-            ratio = row["C"] / bare["C"]
-            nums[f"{p}.{name}_over_bare"] = scalar_entry(ratio, row["source_csv"], f"C_{name} / C_bare at matched (L, gamma)")
-            nums[f"{p}.bare_over_{name}"] = scalar_entry(1.0 / ratio, row["source_csv"], f"C_bare / C_{name} (the 'x times' figure)")
-            store[(L, g)] = 1.0 / ratio
-    for name, store in (("edfl", ratios_edfl), ("rej", ratios_rej)):
-        table = [v for (L, g), v in store.items() if any(L == tL and np.isclose(g, tg) for tL, tg in TAB_PREFACTOR_ROWS)]
-        for suffix, vals in (("", table), ("_all", list(store.values()))):
-            if vals:
-                nums[f"text.prefactor.bare_over_{name}_min{suffix}"] = scalar_entry(min(vals), None, f"min of C_bare/C_{name} over {'the 5 table rows' if not suffix else 'all matched (L, gamma) cells'}")
-                nums[f"text.prefactor.bare_over_{name}_max{suffix}"] = scalar_entry(max(vals), None, f"max of C_bare/C_{name} over {'the 5 table rows' if not suffix else 'all matched (L, gamma) cells'}")
 
 
 def numbers_combined(cells: pd.DataFrame, nums: dict) -> None:
-    """tab:combined-results (asymptotic), fig3 legend alphas, prefactor ratios, per-block acceptance."""
+    """tab:combined-results (asymptotic), fig3 legend alphas, per-block acceptance. C per cell, no ratios."""
     cc = clean_cells(cells)
     comb = cc[cc["protocol"] == "combined"]
-    ratios = {}
     for _, row in comb.iterrows():
         mode = {"combined_full_likelihood": "edfl", "combined_postselect": "rej",
                 "combined_full_likelihood_marg": "marg", "combined_full_likelihood_marg_capped": "margcap"}[row["mode"]]
@@ -294,21 +289,10 @@ def numbers_combined(cells: pd.DataFrame, nums: dict) -> None:
             nums[f"text.combined.per_block_accept_pct_{cell}"] = scalar_entry(
                 100.0 * (row["accept_pct"] / 100.0) ** (1.0 / 3.0), row["source_csv"],
                 "cube root of the joint (three-block) acceptance rate, in percent")
-            edfl = pick(cc, protocol="combined", mode="combined_full_likelihood", L=L, gamma=g, sigma_epsilon=s)
-            if edfl is not None:
-                ratios[cell] = row["C"] / edfl["C"]
-                nums[f"text.combined.prefactor_ratio_{cell}"] = scalar_entry(ratios[cell], row["source_csv"], "C_rejection / C_EDFL for the combined protocol (the paper's '3 to 26x')")
         if mode == "edfl":
-            bare = pick(cc, protocol="bare_fixed", L=L, gamma=g)
-            if bare is not None:
-                nums[f"text.combined.prefactor_ratio_edfl_over_bare_fixed_{cell}"] = scalar_entry(
-                    row["C"] / bare["C"], row["source_csv"],
-                    "C_EDFL(combined, N_total = 3(2L+1)) / C_bare(fixed N = 2L+1) at the same (L, gamma); probe sizes differ")
             if any(L == fL and np.isclose(g, fg) and np.isclose(s, fs) for fL, fg, fs in FIG3_CELLS):
                 nums[f"fig3.alpha.combined_{cell}"] = alpha_entry(row, "asymptotic")
-    if ratios:
-        nums["text.combined.prefactor_ratio_min"] = scalar_entry(min(ratios.values()), None, "min over combined cells of C_rejection / C_EDFL")
-        nums["text.combined.prefactor_ratio_max"] = scalar_entry(max(ratios.values()), None, "max over combined cells of C_rejection / C_EDFL")
+
 
 
 def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> None:
@@ -666,16 +650,18 @@ def table_prefactor(cells, outdir):
     cc = clean_cells(cells)
     groups: dict[int, list[str]] = {}
     for L, g in TAB_PREFACTOR_ROWS:   # the paper's five rows; the other (L, gamma) cells stay in derived/cells.csv
-        bare = pick(cc, protocol="bare_fixed", L=L, gamma=g)
+        bare = pick(cc, protocol="bare_fixed", mode=BARE_PREFACTOR_MODE, L=L, gamma=g)
         if bare is None:
             continue
         edfl = pick(cc, protocol="ed", mode="ed_full_likelihood", L=L, gamma=g)
         rej = pick(cc, protocol="ed", mode="ed_postselect", L=L, gamma=g)
-        if edfl is None or rej is None:
+        if edfl is None:
             continue
+        label = f"$L{{=}}{L}$, $\\gamma = 0$" if g == 0 else f"$L{{=}}{L}$, $\\gamma = {g:.2f}$"
+        rej_cell = f"${rej['C']:.1f}$" if rej is not None else "---"
         groups.setdefault(L, []).append(
-            f"$L{{=}}{L}$, $\\gamma = {g:.2f}$ & ${bare['C']:.0f}$ & $\\mathbf{{{edfl['C']:.0f}}}$ & ${rej['C']:.0f}$ & ${sig2(edfl['C'] / bare['C'])}$ \\\\")
-    write_rows(outdir / "tab_prefactor.tex", "Configuration & Bare GHZ & ED-FL & Rejection sampling & ED-FL/bare  (C = geometric mean of T*eps over converged rows, full range; rows = TAB_PREFACTOR_ROWS)", midrule_groups(groups))
+            f"{label} & ${bare['C']:.1f}$ & ${edfl['C']:.1f}$ & {rej_cell} \\\\")
+    write_rows(outdir / "tab_prefactor.tex", "Configuration & Bare GHZ & ED-FL & Rejection sampling  (C = geometric mean of T*eps over converged rows, full range; bare column = " + BARE_PREFACTOR_MODE + "; rows = TAB_PREFACTOR_ROWS)", midrule_groups(groups))
 
 
 def table_ed(cells, outdir):
