@@ -11,6 +11,9 @@ combined,combined_full_likelihood,0.1,0,0.01,1,0,1,1,mismatched,exact,posterior,
 combined,combined_full_likelihood,0.1,0,0.01,2,0,1,1,mismatched,exact,posterior,15,combined.csv,40,1599,1.01634,0.000817206,1.00477,1.0287
 combined,combined_full_likelihood,0.1,0,0.05,1,0,1,1,mismatched,exact,posterior,9,combined.csv,40,1598,1.01258,0.00222528,0.978508,1.04149
 combined,combined_full_likelihood,0.1,0,0.05,2,0,1,1,mismatched,exact,posterior,15,combined.csv,40,1598,1.00727,0.00174298,0.984371,1.02733
+ed,ed_full_likelihood,0,0,0,1,0,1,1,mismatched,exact,posterior,3,ed.csv,40,1600,1,0,1,1
+ed,ed_full_likelihood,0,0,0,2,0,1,1,mismatched,exact,posterior,5,ed.csv,40,1600,1,0,1,1
+ed,ed_full_likelihood,0,0,0,3,0,1,1,mismatched,exact,posterior,7,ed.csv,40,1600,1,0,1,1
 ed,ed_full_likelihood,0.01,0,0,1,0,1,1,mismatched,exact,posterior,3,ed.csv,40,1600,1.00025,0.000113269,0.998557,1.00111
 ed,ed_full_likelihood,0.01,0,0,2,0,1,1,mismatched,exact,posterior,5,ed.csv,40,1600,1.00018,0.000101202,0.998426,1.00111
 ed,ed_full_likelihood,0.01,0,0,3,0,1,1,mismatched,exact,posterior,7,ed.csv,40,1600,1.00013,7.92751e-05,0.999188,1.00105
