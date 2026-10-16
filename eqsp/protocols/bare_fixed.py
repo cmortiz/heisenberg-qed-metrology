@@ -55,7 +55,10 @@ class BareFixed:
     def begin_epsilon(self, eps: float, rng) -> None:
         spec = self.spec
         N = self.N
-        M_max = max(1, int(1.0 / eps))
+        # matched_depth: the ED/combined schedule floor(1/(eps N)).  Both likelihoods carry the
+        # same fringe frequency 2(N-d)M omega, so resolving eps needs N*M_max ~ 1/eps; the
+        # legacy floor(1/eps) runs N times deeper and inflates the per-shot cost N*M by N.
+        M_max = max(1, int(1.0 / (eps * N))) if spec.matched_depth else max(1, int(1.0 / eps))
         nyquist_limit = H.nyquist_cap(self.m, N, self.period)
         M_max = min(M_max, max(1, nyquist_limit))
         self.M_max = M_max

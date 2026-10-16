@@ -29,6 +29,8 @@ class RunSpec:
     inference: Literal["fl", "ps"] = "fl"     # full-likelihood vs post-selection (rejection) for ed/combined
     marg: bool = False                        # combined marginalised-visibility inference
     marg_cap: bool = False                    # marg: cap the depth at the information-optimal M = 1/(2 sigma sqrt(N_total))
+    matched_depth: bool = False               # bare_fixed: draw M ~ U{1..floor(1/(eps N))}, the ED/combined schedule,
+                                              # so the per-shot cost N*M matches at equal target precision
     q: float = 0.0                            # readout flip probability per measured bit
     k: float = 1.0                            # entangling-gate fidelity (prep visibility k^(n-1) F)
     F: float = 1.0                            # single-qubit init fidelity
@@ -50,7 +52,7 @@ class RunSpec:
         if self.protocol == "bare_adaptive":
             return "bare_hamiltonian_adaptive"
         if self.protocol == "bare_fixed":
-            return "bare_hamiltonian"
+            return "bare_hamiltonian_matched" if self.matched_depth else "bare_hamiltonian"
         if self.protocol == "ed":
             return "ed_full_likelihood" if self.inference == "fl" else "ed_postselect"
         if self.protocol == "combined":

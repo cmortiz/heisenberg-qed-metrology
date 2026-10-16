@@ -95,7 +95,14 @@ def suite_configs(quick: bool) -> dict[int, list[RunSpec]]:
     g: dict[int, list[RunSpec]] = {}
     g[1] = [RunSpec("bare_adaptive", gamma=x) for x in BARE_ADAPTIVE_GAMMAS]
     g[2] = [RunSpec("bare_fixed", gamma=x, L=L) for L, x in BARE_HAM_GRID]
+    # matched-depth baseline (2026-10-16): the legacy cells above draw M ~ U{1..floor(1/eps)}
+    # while ED/combined draw floor(1/(eps N)) at the same per-shot charge N*M, so the published
+    # prefactor gap carried an N-fold schedule inflation.  These cells rerun the baseline on the
+    # ED schedule; gamma = 0 is the calibration row, where the ratio to ED-FL should be ~ 1.
+    g[2] += [RunSpec("bare_fixed", gamma=x, L=L, matched_depth=True) for L, x in BARE_HAM_GRID]
+    g[2] += [RunSpec("bare_fixed", gamma=0.0, L=L, matched_depth=True) for L in (1, 2, 3)]
     g[3] = [RunSpec("ed", gamma=x, L=L, inference=inf) for L, x in ED_GRID for inf in ("fl", "ps")]
+    g[3] += [RunSpec("ed", gamma=0.0, L=L, inference="fl") for L in (1, 2, 3)]   # gamma = 0 calibration row
     g[4] = ([RunSpec("combined", gamma=x, L=L, sigma=s, inference=inf) for L, x, s in COMB_GRID for inf in ("fl", "ps")]
             + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True) for L, x, s in MARG_CONFIGS]
             + [RunSpec("combined", gamma=x, L=L, sigma=s, inference="fl", marg=True, marg_cap=True)
@@ -150,6 +157,8 @@ def job_args(job: Job) -> list[str]:
         args.append("--marg")
     if s.marg_cap:
         args.append("--marg-cap")
+    if s.matched_depth:
+        args.append("--matched-depth")
     if s.extended:
         args.append("--extended")
     if s.protocol == "hwindow":

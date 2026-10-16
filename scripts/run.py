@@ -2,7 +2,7 @@
 """One CLI for every protocol (plan, 'CLI and suite').
 
   run.py PROTOCOL (--seed S | --seeds 1-40) [--gamma] [--L] [--sigma-eps]
-         [--inference ps|fl] [--marg] [--marg-cap] [--q] [--k] [--F] [--estimator mismatched|aware]
+         [--inference ps|fl] [--marg] [--marg-cap] [--matched-depth] [--q] [--k] [--F] [--estimator mismatched|aware]
          [--extended] [--eps-tar] [--N-grid auto|N1,N2,...]
          [--out FILE | --results-dir DIR] [--device auto|cpu|gpu] [--max-experiments N] [--quiet]
 
@@ -57,6 +57,9 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--marg", action="store_true", help="combined: per-shot offsets, marginalised inference")
     ap.add_argument("--marg-cap", action="store_true",
                     help="combined marg: cap the depth at the information-optimal M = 1/(2 sigma sqrt(N_total))")
+    ap.add_argument("--matched-depth", action="store_true",
+                    help="bare_fixed: draw M ~ U{1..floor(1/(eps N))}, the ED/combined schedule, "
+                         "so the per-shot cost N*M matches at equal target precision")
     ap.add_argument("--q", type=float, default=0.0, help="readout flip probability per measured bit")
     ap.add_argument("--k", type=float, default=1.0, help="entangling-gate fidelity (prep visibility k^(n-1) F)")
     ap.add_argument("--F", type=float, default=1.0, help="single-qubit init fidelity")
@@ -75,7 +78,7 @@ def build_parser() -> argparse.ArgumentParser:
 def make_spec(args) -> RunSpec:
     return RunSpec(
         protocol=args.protocol, gamma=args.gamma, L=args.L, sigma=args.sigma_eps,
-        inference=args.inference, marg=args.marg, marg_cap=args.marg_cap, q=args.q, k=args.k, F=args.F,
+        inference=args.inference, marg=args.marg, marg_cap=args.marg_cap, matched_depth=args.matched_depth, q=args.q, k=args.k, F=args.F,
         estimator=args.estimator, extended=args.extended,
         eps_tar=(args.eps_tar if args.protocol == "hwindow" else None),
     )
