@@ -19414,6 +19414,66 @@
   "n_rows": null,
   "note": "[min, max] over L of Converged (%) at sigma = 0"
  },
+ "text.sequential.conv_pct_s0.01_eps1e-2_1e-1": {
+  "value": 98.45833333333334,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0.01, inf) at sigma = 0.01"
+ },
+ "text.sequential.conv_pct_s0.01_eps1e-3_1e-2": {
+  "value": 40.0,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0.001, 0.01) at sigma = 0.01"
+ },
+ "text.sequential.conv_pct_s0.01_epslt1e-3": {
+  "value": 3.833333333333333,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0, 0.001) at sigma = 0.01"
+ },
+ "text.sequential.conv_pct_s0.05_eps1e-2_1e-1": {
+  "value": 65.66666666666666,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0.01, inf) at sigma = 0.05"
+ },
+ "text.sequential.conv_pct_s0.05_eps1e-3_1e-2": {
+  "value": 5.625,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0.001, 0.01) at sigma = 0.05"
+ },
+ "text.sequential.conv_pct_s0.05_epslt1e-3": {
+  "value": 0.16666666666666669,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "Converged (%) over all L, seeds and the targets eps_tar in [0, 0.001) at sigma = 0.05"
+ },
  "text.sequential.conv_s0.01_range": {
   "value": [
    45.04166666666667,
@@ -19440,6 +19500,26 @@
   "n_rows": null,
   "note": "[min, max] over L of Converged (%) at sigma = 0.05"
  },
+ "text.sequential.depth_half_visibility_s0.01": {
+  "value": 58.870501125773735,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "largest depth m with exp(-2 m^2 sigma_epsilon^2) >= 1/2, i.e. sqrt(ln 2 / (2 sigma_epsilon^2))"
+ },
+ "text.sequential.depth_half_visibility_s0.05": {
+  "value": 11.774100225154745,
+  "sem": null,
+  "window": null,
+  "min_points": null,
+  "source_csv": "sequential.csv",
+  "n_seeds": null,
+  "n_rows": null,
+  "note": "largest depth m with exp(-2 m^2 sigma_epsilon^2) >= 1/2, i.e. sqrt(ln 2 / (2 sigma_epsilon^2))"
+ },
  "text.sequential.eps_quoted": {
   "value": 0.0096172487112,
   "sem": null,
@@ -19461,24 +19541,24 @@
   "note": "median |error|/eps_tar over the non-converged noiseless sequential rows: a wrong bit in some round (error many tolerances wide), not a near miss"
  },
  "text.sequential.visibility_s0.01_eps1e-2": {
-  "value": 0.8095716486678869,
+  "value": 0.4295573582107391,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": "sequential.csv",
   "n_seeds": null,
   "n_rows": null,
-  "note": "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps"
+  "note": "per-qubit visibility exp(-2 M_exec_max^2 sigma_epsilon^2) at the quoted eps: the Z-basis readout cos^2(m phi) = (1 + cos(2 m phi))/2 carries the fringe at frequency 2m (eq:seq-noise-visibility)"
  },
  "text.sequential.visibility_s0.05_eps1e-2": {
-  "value": 0.0050860692310126954,
+  "value": 6.691586091292758e-10,
   "sem": null,
   "window": null,
   "min_points": null,
   "source_csv": "sequential.csv",
   "n_seeds": null,
   "n_rows": null,
-  "note": "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps"
+  "note": "per-qubit visibility exp(-2 M_exec_max^2 sigma_epsilon^2) at the quoted eps: the Z-basis readout cos^2(m phi) = (1 + cos(2 m phi))/2 carries the fringe at frequency 2m (eq:seq-noise-visibility)"
  },
  "text.weak_noise_map.gamma_ham_p0.01": {
   "value": 0.10151590085472369,

@@ -68,7 +68,8 @@ T*eps over converged rows, full range; `sem` is of log C), and the log-law membe
 | `text.combined.alpha_asym_max_edfl` | largest asymptotic alpha over the combined ED-FL cells | asymptotic | |
 | `text.ed.alpha_asym_{edfl,rej}_range`, `.alpha_asym_max_dev`, `.conv_edfl_min` | ranges over the ED table; largest deviation of an ED-FL asymptotic alpha from 1; smallest ED-FL convergence | asymptotic / n/a | |
 | `text.sequential.M_exec_max_eps1e-2` | deepest executed round depth at the grid eps nearest 1e-2, from the `M_exec_max` column | n/a | |
-| `text.sequential.M2sigma2_{s}_eps1e-2`, `.visibility_{s}_eps1e-2`, `.eps_quoted` | M_exec_max^2 sigma^2; exp(-M_exec_max^2 sigma^2 / 2); the eps grid point used | n/a | |
+| `text.sequential.M2sigma2_{s}_eps1e-2`, `.visibility_{s}_eps1e-2`, `.eps_quoted` | M_exec_max^2 sigma^2; exp(-2 M_exec_max^2 sigma^2) (Z-basis fringe at frequency 2m); the eps grid point used | n/a | |
+| `text.sequential.depth_half_visibility_{s}`, `.conv_pct_{s}_eps{1e-2_1e-1,1e-3_1e-2,lt1e-3}` | largest depth with exp(-2 m^2 sigma^2) >= 1/2; Converged (%) per target decade over all L and seeds | n/a | |
 | `text.sequential.alpha_full_{noiseless,s0.01,s0.05}`, `.alpha_asym_{tag}_range`, `.conv_{tag}_range` | per sigma: full-window alpha (over L), [min, max] over L of the asymptotic alpha and of the convergence | full / asymptotic / n/a | |
 | `text.sequential.alpha_schedule_range`, `.alpha_schedule_asym_range`, `.T_seed_spread_pct` | fits of the seed-mean cost at all 60 targets (the deterministic schedule); largest per-target seed spread of T | full / asymptotic / n/a | |
 | `text.sequential.nonconv_error_over_eps_median_s0` | median error / eps over the non-converged noiseless rows (wrong-bit rounds) | n/a | |

@@ -317,7 +317,18 @@ def numbers_sequential(cells: pd.DataFrame, df: pd.DataFrame, nums: dict) -> Non
             nums[f"text.sequential.M2sigma2_{sk(s)}_eps1e-2"] = scalar_entry(
                 m_exec**2 * s**2, src, "M_exec_max^2 * sigma_epsilon^2 at the quoted eps")
             nums[f"text.sequential.visibility_{sk(s)}_eps1e-2"] = scalar_entry(
-                math.exp(-0.5 * m_exec**2 * s**2), src, "per-qubit visibility exp(-M_exec_max^2 sigma_epsilon^2 / 2) at the quoted eps")
+                math.exp(-2.0 * m_exec**2 * s**2), src,
+                "per-qubit visibility exp(-2 M_exec_max^2 sigma_epsilon^2) at the quoted eps: the Z-basis readout "
+                "cos^2(m phi) = (1 + cos(2 m phi))/2 carries the fringe at frequency 2m (eq:seq-noise-visibility)")
+            nums[f"text.sequential.depth_half_visibility_{sk(s)}"] = scalar_entry(
+                math.sqrt(math.log(2.0) / (2.0 * s**2)), src,
+                "largest depth m with exp(-2 m^2 sigma_epsilon^2) >= 1/2, i.e. sqrt(ln 2 / (2 sigma_epsilon^2))")
+            cell_s = seq[np.isclose(seq["sigma_epsilon"], s)]
+            for lo, hi, tag in [(1e-2, np.inf, "1e-2_1e-1"), (1e-3, 1e-2, "1e-3_1e-2"), (0.0, 1e-3, "lt1e-3")]:
+                sel = cell_s[(cell_s["epsilon"] >= lo) & (cell_s["epsilon"] < hi)]
+                nums[f"text.sequential.conv_pct_{sk(s)}_eps{tag}"] = scalar_entry(
+                    100.0 * float(sel["converged"].mean()), src,
+                    f"Converged (%) over all L, seeds and the targets eps_tar in [{lo:g}, {hi:g}) at sigma = {s:g}")
     # ranges over L quoted in the main text (value = [min, max] over the L cells)
     for s in sorted(cc.loc[cc["protocol"] == "sequential", "sigma_epsilon"].unique()):
         rows = cc[(cc["protocol"] == "sequential") & np.isclose(cc["sigma_epsilon"], s)]
